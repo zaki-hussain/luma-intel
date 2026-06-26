@@ -90,10 +90,19 @@ function eventSlug(url) {
   } catch { return null; }
 }
 
+// Hosts are full user objects on the event page; turn each into a guest-shaped
+// record (a host obviously attended their own event).
+function hostToGuest(h) {
+  const handle = h.username || h.api_id;
+  if (!handle) return null;
+  const name = (h.name || [h.first_name, h.last_name].filter(Boolean).join(" ") || "").trim() || null;
+  return { profileUrl: `${WEB_BASE}/user/${handle}`, name, username: h.username || null };
+}
+
 export async function fetchEventMeta(eventUrl) {
   const slug = eventSlug(eventUrl);
   const canonical = slug ? `${EVENT_BASE}/${slug}` : eventUrl;
-  let name = null, apiId = null, startAt = null, city = null;
+  let name = null, apiId = null, startAt = null, city = null, hosts = [];
   try {
     const { body } = await getText(canonical);
     const m = body.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
@@ -105,9 +114,10 @@ export async function fetchEventMeta(eventUrl) {
       apiId = e.api_id || root.api_id || null;
       startAt = e.start_at || root.start_at || null;
       city = e.geo_address_info?.city_state || e.geo_address_info?.city || root.featured_city || null;
+      hosts = (root.hosts || []).map(hostToGuest).filter(Boolean);
     }
   } catch { /* fall back to slug */ }
-  return { url: canonical, slug, name: name || slug || canonical, apiId, startAt, city };
+  return { url: canonical, slug, name: name || slug || canonical, apiId, startAt, city, hosts };
 }
 
 export { WEB_BASE, API_BASE, EVENT_BASE };

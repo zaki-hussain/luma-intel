@@ -60,6 +60,34 @@ function summarize(ev) {
            guestCount: ev.guests ? ev.guests.length : (ev.guestCount ?? 0), addedAt: ev.addedAt };
 }
 
+// everyone across all saved events, ranked by how many of your events they
+// attended (most frequent first), enriched from the profile cache when available
+function rankPeople(store) {
+  const byUrl = new Map();
+  for (const ev of store.events) {
+    for (const g of ev.guests) {
+      if (!byUrl.has(g.profileUrl)) byUrl.set(g.profileUrl, { ...g, events: [] });
+      byUrl.get(g.profileUrl).events.push({ id: ev.id, name: ev.name, url: ev.url });
+    }
+  }
+  const people = [...byUrl.values()].map((p) => {
+    const cached = store.people[p.profileUrl] || {};
+    return {
+      profileUrl: p.profileUrl,
+      name: cached.name || p.name || p.username,
+      username: cached.username || p.username,
+      socials: cached.socials || {},
+      bio: cached.bio || null,
+      attendedCount: cached.attendedCount ?? null,
+      hostedCount: cached.hostedCount ?? null,
+      count: p.events.length,
+      events: p.events,
+    };
+  });
+  people.sort((a, b) => b.count - a.count || (a.name || "").localeCompare(b.name || ""));
+  return people;
+}
+
 function normGuests(guests) {
   if (!Array.isArray(guests)) return [];
   const byUrl = new Map();
@@ -145,6 +173,12 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { events: eventsSorted(store).map(summarize) });
     }
 
+    // everyone you've met, ranked most-frequent first
+    if (req.method === "GET" && pathname === "/api/people") {
+      const store = await loadStore();
+      return send(res, 200, { people: rankPeople(store) });
+    }
+
     // save an attended event (url + guest list) — resolves profiles in the background
     if (req.method === "POST" && pathname === "/api/events") {
       const body = await readJson(req);
@@ -157,14 +191,17 @@ const server = http.createServer(async (req, res) => {
       run(job, async (job) => {
         const meta = await fetchEventMeta(body.url);
         const eventId = meta.slug || meta.url;
-        const { hits, fetched } = await enrichGuests(guests.map((g) => g.profileUrl), store, job);
+        // the hosts attended too — fold them into the guest list
+        const allGuests = normGuests([...guests, ...meta.hosts]);
+        const { hits, fetched } = await enrichGuests(allGuests.map((g) => g.profileUrl), store, job);
         const existing = store.events.find((e) => e.id === eventId);
         const record = { id: eventId, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city,
-                         addedAt: existing?.addedAt || new Date().toISOString(), guests };
+                         addedAt: existing?.addedAt || new Date().toISOString(), guests: allGuests };
         if (existing) Object.assign(existing, record);
         else store.events.push(record);
         await saveStore(store);
-        return { event: summarize(record), stats: { hits, fetched, total: guests.length } };
+        return { event: summarize(record),
+                 stats: { hits, fetched, total: allGuests.length, hosts: meta.hosts.length } };
       });
       return send(res, 202, { jobId: id });
     }
@@ -196,6 +233,7 @@ const server = http.createServer(async (req, res) => {
         if (body?.url) {
           const meta = await fetchEventMeta(body.url);
           const id = meta.slug || meta.url;
+          guests = normGuests([...guests, ...meta.hosts]); // hosts attended too
           targetEvent = store.events.find((e) => e.id === id)
             || { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city, guestCount: guests.length };
         }
