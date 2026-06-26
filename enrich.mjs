@@ -63,6 +63,10 @@ async function main() {
       const ev = p.hostedEvents?.length ? ` · ${p.hostedEvents.length} hosted` : "";
       console.error(`  [${i + 1}/${n}] ${p.error ? "ERR " + p.error : `${p.name || p.profileUrl}${ev}`}`);
     },
+    onDescription: (done, total) => {
+      if (done === 1) console.error(`\nFetching ${total} hosted-event descriptions…`);
+      console.error(`  [${done}/${total}] event description`);
+    },
   });
 
   const { peopleFile, eventsFile } = await writeRolodex(people, { json: has("json") });
