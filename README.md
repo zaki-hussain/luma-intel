@@ -10,8 +10,9 @@ you're considering to see which guests you've already crossed paths with.
 ## How it works
 
 - **Save an event you attended.** Paste its Luma URL, paste the guest list, and
-  hit *Save attended event*. Each guest's profile (LinkedIn / socials / bio) is
-  resolved right then and cached. Events are listed newest-first and stored in
+  hit *Save attended event*. The event's hosts (read from the public event page)
+  are folded in as attendees too. Each guest's profile (LinkedIn / socials / bio)
+  is resolved right then and cached. Events are listed newest-first and stored in
   `data/events.json`.
 - **Check an event.** Paste a new event's URL + guest list (or click *Check* on a
   saved one). The people you've already been to an event with are flagged, with
@@ -21,6 +22,8 @@ you're considering to see which guests you've already crossed paths with.
   LinkedIn / socials, bio, attended/hosted counts, and shared-event history) is
   available to **Copy markdown** or **Download .md**, and is also written to
   `out/people.md` for manual access.
+- **People you've met.** A ranked list of everyone across your saved events,
+  most-frequent first, with their socials and which events you share.
 - **Export / Import.** Back up everything (events, guest lists, and cached
   profiles) to a JSON file and restore it later — or move it to another machine.
 

@@ -68,6 +68,7 @@
   .person h3 { margin: 0 0 6px; font-size: 16px; }
   .badge { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
   .badge.known { background: rgba(90,209,154,.12); color: var(--good); border: 1px solid rgba(90,209,154,.4); }
+  .badge.count { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
   .meta { color: var(--muted); font-size: 13px; margin: 2px 0; }
   .meta .lbl { color: var(--muted); display: inline-block; min-width: 96px; }
   .bio { font-size: 13px; margin: 6px 0; }
@@ -106,6 +107,13 @@
     <input type="file" id="importFile" accept="application/json,.json" hidden />
   </div>
   <ul class="evlist" id="evlist"><li class="empty">No saved events yet.</li></ul>
+
+  <h2>People you've met</h2>
+  <div class="toolbar">
+    <button id="showPeople">Show people you've met</button>
+    <span class="stat" id="peopleStat"></span>
+  </div>
+  <div id="people"></div>
 
   <h2 id="resultsHead" style="display:none">Results</h2>
   <div class="toolbar" id="resultTools" style="display:none">
@@ -199,10 +207,36 @@ function renderResult(result) {
   filesEl.innerHTML = result.files ? `Also saved for manual access: <code>${escapeHtml(result.files.people)}</code>.` : "";
 }
 
+// --- people you've met (ranked) ---------------------------------------------
+function rankedRow(p) {
+  const badgeClass = p.count > 1 ? "known" : "count";
+  const events = (p.events || []).map(e => `<a href="${escapeAttr(e.url)}" target="_blank" rel="noopener">${escapeHtml(e.name)}</a>`).join(", ");
+  return `<div class="person${p.count > 1 ? " known" : ""}">
+    <h3>${escapeHtml(p.name || p.username || "(unknown)")}<span class="badge ${badgeClass}">${p.count} event${p.count === 1 ? "" : "s"}</span></h3>
+    <div class="meta"><span class="lbl">profile</span><a href="${escapeAttr(p.profileUrl)}" target="_blank" rel="noopener">${escapeHtml(p.profileUrl.replace("https://luma.com", "luma.com"))}</a></div>
+    <div class="meta"><span class="lbl">socials</span>${socialsHtml(p.socials)}</div>
+    ${p.bio ? `<div class="bio">${escapeHtml(p.bio)}</div>` : ""}
+    <div class="meta"><span class="lbl">events</span>${events}</div>
+  </div>`;
+}
+
+async function showPeople() {
+  $("showPeople").disabled = true;
+  try {
+    const people = (await (await fetch("/api/people")).json()).people || [];
+    $("peopleStat").textContent = people.length ? `${people.length} people · most frequent first` : "";
+    $("people").innerHTML = people.length
+      ? people.map(rankedRow).join("")
+      : '<div class="empty">No people yet — save some events first.</div>';
+  } catch (e) { setStatus(`Couldn't load people (${e.message}).`, true); }
+  finally { $("showPeople").disabled = false; }
+}
+
 // --- saved events ------------------------------------------------------------
 async function loadEvents() {
   let events = [];
   try { events = (await (await fetch("/api/events")).json()).events || []; } catch {}
+  if ($("people").children.length) showPeople(); // keep the ranked list fresh
   if (!events.length) { evlist.innerHTML = '<li class="empty">No saved events yet.</li>'; return; }
   evlist.innerHTML = events.map(ev => `
     <li class="evrow" data-id="${escapeAttr(ev.id)}">
@@ -308,6 +342,7 @@ zone.addEventListener("paste", (e) => {
 
 $("save").addEventListener("click", save);
 $("check").addEventListener("click", checkCurrent);
+$("showPeople").addEventListener("click", showPeople);
 $("clear").addEventListener("click", () => {
   state.guests = []; zone.innerHTML = ""; eventUrl.value = ""; stat.textContent = "";
   setStatus(""); setBar(0, 0);
