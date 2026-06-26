@@ -24,46 +24,50 @@
     color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-  header {
-    padding: 24px 28px 14px;
-    border-bottom: 1px solid var(--border);
-  }
+  header { padding: 24px 28px 14px; border-bottom: 1px solid var(--border); }
   h1 { margin: 0; font-size: 20px; }
   .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
   main { padding: 20px 28px 60px; max-width: 1100px; }
+  h2 { font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin: 28px 0 10px; }
+  input[type=text] {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    background: #0b0e14; color: var(--text); border: 1px solid var(--border); font-size: 14px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
   .pastezone {
-    min-height: 120px;
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    padding: 18px;
-    background: var(--panel);
-    outline: none;
+    margin-top: 10px; min-height: 96px;
+    border: 2px dashed var(--border); border-radius: 12px; padding: 16px;
+    background: var(--panel); outline: none;
     transition: border-color .15s ease, background .15s ease;
   }
   .pastezone:focus { border-color: var(--accent); background: var(--panel-2); }
-  .pastezone:empty::before {
-    content: "Click here, then paste (Cmd/Ctrl+V) the Luma guest list you copied…";
-    color: var(--muted);
-  }
-  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; align-items: center; }
+  .pastezone:empty::before { content: "Click here, then paste (Cmd/Ctrl+V) the Luma guest list…"; color: var(--muted); }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
   button {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    padding: 8px 14px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
   }
   button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.tiny { padding: 4px 9px; font-size: 12px; }
   .stat { color: var(--muted); font-size: 13px; margin-left: auto; }
-  .status { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .status { margin: 4px 0 0; color: var(--muted); font-size: 13px; min-height: 18px; }
   .status.err { color: var(--warn); }
   .bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin-top: 10px; display: none; }
   .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+
+  .evlist { list-style: none; padding: 0; margin: 0; }
+  .evrow { display: flex; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+  .evrow .evmain { flex: 1; min-width: 0; }
+  .evrow .evname { font-weight: 600; }
+  .evrow .evmeta { color: var(--muted); font-size: 12px; }
+
   .person { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-top: 12px; background: var(--panel); }
+  .person.known { border-color: var(--good); }
   .person h3 { margin: 0 0 6px; font-size: 16px; }
-  .person h3 .ok { color: var(--good); font-size: 12px; margin-left: 6px; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .badge.known { background: rgba(90,209,154,.12); color: var(--good); border: 1px solid rgba(90,209,154,.4); }
   .meta { color: var(--muted); font-size: 13px; margin: 2px 0; }
   .meta .lbl { color: var(--muted); display: inline-block; min-width: 96px; }
   .bio { font-size: 13px; margin: 6px 0; }
@@ -71,10 +75,8 @@
   a:hover { text-decoration: underline; }
   .soc { display: inline-flex; gap: 8px; flex-wrap: wrap; }
   .soc a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; }
-  .events { margin: 6px 0 0; padding-left: 18px; }
-  .events li { font-size: 13px; margin: 2px 0; }
-  .empty { color: var(--muted); padding: 14px 2px; }
-  .files { color: var(--muted); font-size: 12px; margin-top: 16px; }
+  .empty { color: var(--muted); padding: 12px 2px; }
+  .files { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .files code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
 </style>
 </head>
@@ -85,35 +87,42 @@
 </header>
 
 <main>
+  <h2>Add or check an event</h2>
+  <input type="text" id="eventUrl" placeholder="Luma event URL (e.g. https://lu.ma/abc123)" autocomplete="off" />
   <div id="zone" class="pastezone" contenteditable="true" spellcheck="false"></div>
-
   <div class="toolbar">
+    <button id="save">Save attended event</button>
+    <button class="primary" id="check">Check this event</button>
     <button id="clear">Clear</button>
     <span class="stat" id="stat"></span>
   </div>
   <div class="bar" id="bar"><i></i></div>
   <div class="status" id="status"></div>
 
-  <div id="results">
-    <div class="empty">Nothing captured yet.</div>
-  </div>
+  <h2>Your events</h2>
+  <ul class="evlist" id="evlist"><li class="empty">No saved events yet.</li></ul>
 
+  <h2 id="resultsHead" style="display:none">Results</h2>
+  <div class="toolbar" id="resultTools" style="display:none">
+    <button id="copyMd">Copy markdown</button>
+    <button id="downloadMd">Download .md</button>
+    <span class="stat" id="resultStat"></span>
+  </div>
+  <div id="results"></div>
   <div class="files" id="files"></div>
 </main>
 
 <script>
 const LUMA_BASE = "https://luma.com";
-const state = { guests: [] };
+const state = { guests: [], result: null };
 
-const zone = document.getElementById("zone");
-const results = document.getElementById("results");
-const stat = document.getElementById("stat");
-const statusEl = document.getElementById("status");
-const bar = document.getElementById("bar");
-const barFill = bar.querySelector("i");
-const filesEl = document.getElementById("files");
+const $ = (id) => document.getElementById(id);
+const zone = $("zone"), eventUrl = $("eventUrl"), stat = $("stat");
+const statusEl = $("status"), bar = $("bar"), barFill = bar.querySelector("i");
+const evlist = $("evlist"), results = $("results"), filesEl = $("files");
+const resultsHead = $("resultsHead"), resultTools = $("resultTools"), resultStat = $("resultStat");
 
-// A Luma profile link looks like /user/<username|usr-id> (relative in the copied list).
+// --- clipboard parsing (keeps the /user/ profile links) ---------------------
 function profilePath(href) {
   try {
     const u = new URL(href, LUMA_BASE);
@@ -121,105 +130,135 @@ function profilePath(href) {
   } catch {}
   return null;
 }
-
 function cleanName(s) {
   return (s || "").replace(/^Profile picture for\s*/i, "").replace(/\s+/g, " ").trim();
 }
-
 function parseHtml(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const guests = [];
-  const seen = new Set();
+  const guests = [], seen = new Set();
   for (const a of doc.querySelectorAll("a[href]")) {
     const path = profilePath(a.getAttribute("href") || "");
     if (!path) continue;
     const profileUrl = LUMA_BASE + path;
     if (seen.has(profileUrl)) continue;
     seen.add(profileUrl);
-
     let name = "";
     const nameEl = a.querySelector(".name");
     if (nameEl) name = nameEl.getAttribute("title") || nameEl.textContent;
-    if (!name) {
-      const img = a.querySelector("img[alt], img[title]");
-      if (img) name = img.getAttribute("alt") || img.getAttribute("title");
-    }
+    if (!name) { const img = a.querySelector("img[alt], img[title]"); if (img) name = img.getAttribute("alt") || img.getAttribute("title"); }
     if (!name) name = a.textContent;
-    name = cleanName(name);
-
-    guests.push({ name, profileUrl, username: path.replace("/user/", "") });
+    guests.push({ name: cleanName(name), profileUrl, username: path.replace("/user/", "") });
   }
   return guests;
 }
 
+// --- rendering ---------------------------------------------------------------
 const SOCIAL_LABEL = { twitter: "x" };
 const SOCIAL_KEYS = ["linkedin", "instagram", "twitter", "website", "youtube", "tiktok", "github"];
 
+function escapeHtml(s = "") { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function escapeAttr(s = "") { return String(s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
 function socialsHtml(socials = {}) {
-  const items = SOCIAL_KEYS
-    .filter((k) => socials[k])
+  const items = SOCIAL_KEYS.filter((k) => socials[k])
     .map((k) => `<a href="${escapeAttr(socials[k])}" target="_blank" rel="noopener">${SOCIAL_LABEL[k] || k}</a>`);
   return items.length ? `<span class="soc">${items.join("")}</span>` : '<span class="empty">—</span>';
 }
 
 function personHtml(p) {
   if (p.error) {
-    return `<div class="person"><h3>${escapeHtml(p.profileUrl)}</h3>
-      <div class="meta">could not fetch — ${escapeHtml(p.error)}</div></div>`;
+    return `<div class="person"><h3>${escapeHtml(p.profileUrl)}</h3><div class="meta">could not fetch — ${escapeHtml(p.error)}</div></div>`;
   }
-  const events = (p.hostedEvents || []).map((ev) =>
-    `<li><a href="${escapeAttr(ev.url || "#")}" target="_blank" rel="noopener">${escapeHtml(ev.name || ev.url)}</a></li>`
-  ).join("");
-  return `<div class="person">
-    <h3>${escapeHtml(p.name || p.username || "(unknown)")}</h3>
+  const known = (p.seenAt || []).length;
+  const seen = known
+    ? `<div class="meta"><span class="lbl">met before at</span>${p.seenAt.map(e => `<a href="${escapeAttr(e.url)}" target="_blank" rel="noopener">${escapeHtml(e.name)}</a>`).join(", ")}</div>`
+    : "";
+  return `<div class="person${known ? " known" : ""}">
+    <h3>${escapeHtml(p.name || p.username || "(unknown)")}${known ? `<span class="badge known">met at ${known} of your events</span>` : ""}</h3>
     <div class="meta"><span class="lbl">profile</span><a href="${escapeAttr(p.profileUrl)}" target="_blank" rel="noopener">${escapeHtml(p.profileUrl.replace("https://luma.com", "luma.com"))}</a></div>
     <div class="meta"><span class="lbl">socials</span>${socialsHtml(p.socials)}</div>
     ${p.bio ? `<div class="bio">${escapeHtml(p.bio)}</div>` : ""}
     <div class="meta"><span class="lbl">attended</span>${p.attendedCount ?? "?"} &nbsp;·&nbsp; hosted ${p.hostedCount ?? "?"}</div>
-    ${events ? `<ul class="events">${events}</ul>` : ""}
+    ${seen}
   </div>`;
 }
 
-function renderPeople(people) {
-  const ok = people.filter((p) => !p.error);
-  stat.textContent = `${ok.length} people resolved`;
-  results.innerHTML = people.length
-    ? people.map(personHtml).join("")
-    : '<div class="empty">No one resolved.</div>';
+function renderResult(result) {
+  state.result = result;
+  const people = [...result.people].sort((a, b) => (b.seenAt?.length || 0) - (a.seenAt?.length || 0));
+  resultsHead.style.display = "block";
+  resultTools.style.display = "flex";
+  const title = result.event?.name ? `${result.event.name} — ` : "";
+  resultStat.textContent = `${title}${result.stats.known} familiar · ${result.stats.resolved}/${result.stats.total} profiles`;
+  results.innerHTML = people.length ? people.map(personHtml).join("") : '<div class="empty">No one resolved.</div>';
+  filesEl.innerHTML = result.files ? `Also saved for manual access: <code>${escapeHtml(result.files.people)}</code>.` : "";
 }
 
-function escapeHtml(s = "") {
-  return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-function escapeAttr(s = "") {
-  return String(s).replace(/"/g, "&quot;").replace(/</g, "&lt;");
+// --- saved events ------------------------------------------------------------
+async function loadEvents() {
+  let events = [];
+  try { events = (await (await fetch("/api/events")).json()).events || []; } catch {}
+  if (!events.length) { evlist.innerHTML = '<li class="empty">No saved events yet.</li>'; return; }
+  evlist.innerHTML = events.map(ev => `
+    <li class="evrow" data-id="${escapeAttr(ev.id)}">
+      <div class="evmain">
+        <div class="evname"><a href="${escapeAttr(ev.url)}" target="_blank" rel="noopener">${escapeHtml(ev.name)}</a></div>
+        <div class="evmeta">${ev.guestCount} guests${ev.city ? " · " + escapeHtml(ev.city) : ""}${ev.startAt ? " · " + escapeHtml(ev.startAt.slice(0,10)) : ""}</div>
+      </div>
+      <button class="tiny" data-act="check">Check</button>
+      <button class="tiny" data-act="delete">Delete</button>
+    </li>`).join("");
 }
 
-function setStatus(msg, isErr = false) {
-  statusEl.textContent = msg || "";
-  statusEl.classList.toggle("err", !!isErr);
-}
+evlist.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  const id = btn.closest(".evrow").dataset.id;
+  if (btn.dataset.act === "delete") {
+    await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+    loadEvents();
+  } else if (btn.dataset.act === "check") {
+    analyze({ eventId: id });
+  }
+});
+
+// --- actions -----------------------------------------------------------------
+function setStatus(msg, isErr = false) { statusEl.textContent = msg || ""; statusEl.classList.toggle("err", !!isErr); }
 function setBar(done, total) {
   if (!total) { bar.style.display = "none"; return; }
-  bar.style.display = "block";
-  barFill.style.width = Math.round((done / total) * 100) + "%";
+  bar.style.display = "block"; barFill.style.width = Math.round((done / total) * 100) + "%";
 }
 
-async function enrich(guests) {
+async function save() {
+  if (!eventUrl.value.trim()) return setStatus("Add the event URL first.", true);
+  if (!state.guests.length) return setStatus("Paste the guest list first.", true);
+  setStatus("Saving event…");
+  try {
+    const res = await fetch("/api/events", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: eventUrl.value.trim(), guests: state.guests }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    setStatus(`Saved “${data.event.name}” (${data.event.guestCount} guests).`);
+    loadEvents();
+  } catch (e) { setStatus(`Couldn't save (${e.message}).`, true); }
+}
+
+async function analyze(payload) {
   setStatus("Building the rolodex in the background — reading profiles…");
   setBar(0, 1);
+  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
   let jobId;
   try {
-    const res = await fetch("/api/enrich", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ guests }),
+    const res = await fetch("/api/analyze", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`server responded ${res.status}`);
-    ({ jobId } = await res.json());
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    jobId = data.jobId;
   } catch (e) {
     setBar(0, 0);
-    setStatus(`Couldn't reach the local server (${e.message}). Start it with "npm start", then reload this page.`, true);
+    setStatus(`Couldn't start the check (${e.message}). Is the server running ("npm start")?`, true);
     return;
   }
   poll(jobId);
@@ -227,33 +266,24 @@ async function enrich(guests) {
 
 async function poll(jobId) {
   let res;
-  try {
-    res = await (await fetch(`/api/enrich/${jobId}`)).json();
-  } catch (e) {
-    setStatus(`Lost contact with the server (${e.message}).`, true);
-    return;
-  }
+  try { res = await (await fetch(`/api/analyze/${jobId}`)).json(); }
+  catch (e) { setStatus(`Lost contact with the server (${e.message}).`, true); return; }
   const pr = res.progress || {};
   if (res.status === "running") {
-    const label = pr.phase === "descriptions" ? "Reading hosted-event descriptions" : "Reading profiles";
     setBar(pr.done || 0, pr.total || 1);
-    setStatus(`${label} — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
-    setTimeout(() => poll(jobId), 600);
-    return;
+    setStatus(`Reading profiles — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
+    return void setTimeout(() => poll(jobId), 600);
   }
-  if (res.status === "error") {
-    setBar(0, 0);
-    setStatus(res.error || "enrichment failed", true);
-    return;
-  }
-  // done
+  if (res.status === "error") { setBar(0, 0); setStatus(res.error || "check failed", true); return; }
   setBar(1, 1);
-  setStatus(`Done — ${res.result.people.filter(p => !p.error).length} profiles resolved.`);
-  renderPeople(res.result.people);
-  if (res.result.files) {
-    filesEl.innerHTML =
-      `Also saved for manual access: <code>${escapeHtml(res.result.files.people)}</code> and <code>${escapeHtml(res.result.files.events)}</code>.`;
-  }
+  setStatus(`Done — ${res.result.stats.known} of ${res.result.stats.resolved} guests you've crossed paths with before.`);
+  renderResult(res.result);
+}
+
+// check the freshly pasted event (uses the URL only to label/exclude it)
+function checkCurrent() {
+  if (!state.guests.length) return setStatus("Paste the guest list first.", true);
+  analyze({ url: eventUrl.value.trim() || undefined, guests: state.guests });
 }
 
 zone.addEventListener("paste", (e) => {
@@ -263,26 +293,35 @@ zone.addEventListener("paste", (e) => {
   state.guests = html ? parseHtml(html) : [];
   if (!state.guests.length) {
     zone.innerHTML = `<div class="empty">No Luma profile links found. Select the guest-list rows (each name links to /user/…) and copy again.</div>`;
-    setStatus("");
-    setBar(0, 0);
-    return;
+    stat.textContent = ""; return;
   }
-  zone.innerHTML = `<div class="empty">Captured ${state.guests.length} guests. Enriching…</div>`;
-  results.innerHTML = '<div class="empty">Working…</div>';
-  filesEl.textContent = "";
+  zone.innerHTML = `<div class="empty">Captured ${state.guests.length} guests.</div>`;
   stat.textContent = `${state.guests.length} captured`;
-  enrich(state.guests);
+  setStatus("");
 });
 
-document.getElementById("clear").addEventListener("click", () => {
-  state.guests = [];
-  zone.innerHTML = "";
-  results.innerHTML = '<div class="empty">Nothing captured yet.</div>';
-  stat.textContent = "";
-  filesEl.textContent = "";
-  setStatus("");
-  setBar(0, 0);
+$("save").addEventListener("click", save);
+$("check").addEventListener("click", checkCurrent);
+$("clear").addEventListener("click", () => {
+  state.guests = []; zone.innerHTML = ""; eventUrl.value = ""; stat.textContent = "";
+  setStatus(""); setBar(0, 0);
+  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
 });
+
+$("copyMd").addEventListener("click", async () => {
+  if (!state.result) return;
+  try { await navigator.clipboard.writeText(state.result.markdown); setStatus("Markdown copied to clipboard."); }
+  catch { setStatus("Couldn't access clipboard — use Download .md instead.", true); }
+});
+$("downloadMd").addEventListener("click", () => {
+  if (!state.result) return;
+  const name = (state.result.event?.name || "luma-rolodex").replace(/[^\w.-]+/g, "-").slice(0, 60) + ".md";
+  const blob = new Blob([state.result.markdown], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+});
+
+loadEvents();
 </script>
 </body>
 </html>
