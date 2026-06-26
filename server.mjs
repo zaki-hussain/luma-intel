@@ -5,13 +5,15 @@
  * A personal log of the Luma events you've been to, used to spot familiar faces
  * at events you're considering:
  *
- *   1. Paste an event URL + its guest list to SAVE an event you attended.
- *   2. CHECK an event (a new one you paste, or one you saved) to see which of
- *      its guests you've already been to an event with — and get the enriched
- *      profiles (LinkedIn, socials, bio) as copy/download-ready markdown.
+ *   1. Paste an event URL + its guest list to SAVE an event you attended. Saving
+ *      resolves every guest's profile (LinkedIn, socials, bio) right away.
+ *   2. CHECK an event (a new one you paste, or one you saved) to see which of its
+ *      guests you've already been to an event with — plus the enriched profiles
+ *      as copy/download-ready markdown.
  *
- * Enrichment runs automatically in the background; the user never runs a
- * command by hand. Your saved events live in data/events.json.
+ * Resolved profiles are cached (keyed by Luma profile URL) in data/events.json,
+ * so a guest seen before is never re-fetched — only their shared-event history
+ * is recomputed. Use Export / Import to back up or restore everything.
  *
  *   npm start            # then open the printed URL
  *   PORT=8080 npm start  # pick a port
@@ -34,14 +36,24 @@ const PORT = Number(process.env.PORT) || 5178;
 const DATA_DIR = path.join(ROOT, "data");
 const STORE_FILE = path.join(DATA_DIR, "events.json");
 
-// --- persistent event store ------------------------------------------------
+// --- persistent store: { events: [...], people: { <profileUrl>: person } } ---
 async function loadStore() {
-  try { return JSON.parse(await readFile(STORE_FILE, "utf8")); }
-  catch { return { events: [] }; }
+  try {
+    const s = JSON.parse(await readFile(STORE_FILE, "utf8"));
+    s.events ||= [];
+    s.people ||= {};
+    return s;
+  } catch { return { events: [], people: {} }; }
 }
 async function saveStore(store) {
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(STORE_FILE, JSON.stringify(store, null, 2));
+}
+
+// reverse-chronological by event date, newest first (fall back to added time)
+function eventsSorted(store) {
+  return [...store.events].sort((a, b) =>
+    (b.startAt || b.addedAt || "").localeCompare(a.startAt || a.addedAt || ""));
 }
 function summarize(ev) {
   return { id: ev.id, url: ev.url, name: ev.name, startAt: ev.startAt, city: ev.city,
@@ -63,10 +75,17 @@ function normGuests(guests) {
   return [...byUrl.values()];
 }
 
+// only the fields worth caching long-term
+function cleanPerson(p) {
+  return { name: p.name, username: p.username, profileUrl: p.profileUrl,
+           bio: p.bio, verified: p.verified,
+           attendedCount: p.attendedCount, hostedCount: p.hostedCount, socials: p.socials };
+}
+
 // --- http helpers ------------------------------------------------------------
-function send(res, code, body, type = "application/json") {
+function send(res, code, body, type = "application/json", headers = {}) {
   const payload = type === "application/json" ? JSON.stringify(body) : body;
-  res.writeHead(code, { "content-type": type, "cache-control": "no-store" });
+  res.writeHead(code, { "content-type": type, "cache-control": "no-store", ...headers });
   res.end(payload);
 }
 async function readJson(req) {
@@ -76,61 +95,37 @@ async function readJson(req) {
   catch { return null; }
 }
 
-// --- analyze jobs ------------------------------------------------------------
+// --- background jobs ---------------------------------------------------------
 const jobs = new Map();
-
-function startAnalyze({ guests, targetEvent, store }) {
+function newJob(total = 0) {
   const id = randomUUID();
-  const job = {
-    status: "running",
-    progress: { phase: "profiles", done: 0, total: guests.length, message: "reading profiles…" },
-    result: null,
-    error: null,
-  };
+  const job = { status: "running", progress: { phase: "profiles", done: 0, total, message: "starting…" },
+                result: null, error: null };
   jobs.set(id, job);
+  return { id, job };
+}
+function run(job, fn) {
+  fn(job)
+    .then((result) => { job.result = result; job.status = "done";
+                        job.progress = { ...job.progress, phase: "done", message: "done" }; })
+    .catch((e) => { job.status = "error"; job.error = e?.message || String(e); });
+}
 
-  (async () => {
-    // index: profileUrl -> list of stored events that person appeared at
-    // (excluding the event we're checking, so we report *other* shared events)
-    const seenIndex = new Map();
-    for (const ev of store.events) {
-      if (targetEvent && ev.id === targetEvent.id) continue;
-      for (const g of ev.guests) {
-        if (!seenIndex.has(g.profileUrl)) seenIndex.set(g.profileUrl, []);
-        seenIndex.get(g.profileUrl).push({ id: ev.id, name: ev.name, url: ev.url });
-      }
-    }
-
-    const urls = guests.map((g) => g.profileUrl);
-    configure({ delayMs: 1000, concurrency: 2 });
-    const people = await buildRolodex(urls, {
-      onProgress: (p, i, n) => {
-        job.progress = { phase: "profiles", done: i + 1, total: n,
-                         message: p.error ? `skipped ${p.profileUrl}` : (p.name || p.profileUrl) };
-      },
-    });
-
-    for (const p of people) {
-      if (p.error) continue;
-      p.seenAt = seenIndex.get(p.profileUrl) || [];
-    }
-
-    const title = targetEvent?.name || "Luma rolodex";
-    const { peopleFile } = await writeRolodex(people, { title });
-    const known = people.filter((p) => !p.error && p.seenAt?.length).length;
-
-    job.status = "done";
-    job.result = {
-      event: targetEvent ? summarize(targetEvent) : null,
-      people: peopleJson(people),
-      markdown: peopleMd(people, { title }),
-      files: { people: `out/${peopleFile}` },
-      stats: { total: people.length, resolved: people.filter((p) => !p.error).length, known },
-    };
-    job.progress = { phase: "done", done: people.length, total: people.length, message: "done" };
-  })().catch((e) => { job.status = "error"; job.error = e?.message || String(e); });
-
-  return id;
+// Resolve profiles, reusing anyone already cached in the store; newly fetched
+// profiles are written back into the cache. Returns people in input order.
+async function enrichGuests(profileUrls, store, job) {
+  const cache = new Map(Object.entries(store.people));
+  let hits = 0, fetched = 0;
+  const people = await buildRolodex(profileUrls, {
+    cache,
+    onResolved: (p) => { store.people[p.profileUrl] = cleanPerson(p); },
+    onProgress: (p, i, n, cached) => {
+      if (cached) hits++; else fetched++;
+      job.progress = { phase: "profiles", done: i + 1, total: n,
+                       message: `${cached ? "cached " : ""}${p.name || p.profileUrl}` };
+    },
+  });
+  return { people, hits, fetched };
 }
 
 // --- routes ------------------------------------------------------------------
@@ -144,29 +139,34 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, html, "text/html; charset=utf-8");
     }
 
-    // list saved events
+    // list saved events (reverse chronological)
     if (req.method === "GET" && pathname === "/api/events") {
       const store = await loadStore();
-      return send(res, 200, { events: store.events.map(summarize) });
+      return send(res, 200, { events: eventsSorted(store).map(summarize) });
     }
 
-    // save an attended event (url + guest list)
+    // save an attended event (url + guest list) — resolves profiles in the background
     if (req.method === "POST" && pathname === "/api/events") {
       const body = await readJson(req);
       if (!body?.url) return send(res, 400, { error: "missing event url" });
       const guests = normGuests(body.guests);
       if (!guests.length) return send(res, 400, { error: "no Luma /user/ profiles found in the guest list" });
 
-      const meta = await fetchEventMeta(body.url);
-      const id = meta.slug || meta.url;
       const store = await loadStore();
-      const existing = store.events.find((e) => e.id === id);
-      const record = { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city,
-                       addedAt: existing?.addedAt || new Date().toISOString(), guests };
-      if (existing) Object.assign(existing, record);
-      else store.events.unshift(record);
-      await saveStore(store);
-      return send(res, 200, { event: summarize(record) });
+      const { id, job } = newJob(guests.length);
+      run(job, async (job) => {
+        const meta = await fetchEventMeta(body.url);
+        const eventId = meta.slug || meta.url;
+        const { hits, fetched } = await enrichGuests(guests.map((g) => g.profileUrl), store, job);
+        const existing = store.events.find((e) => e.id === eventId);
+        const record = { id: eventId, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city,
+                         addedAt: existing?.addedAt || new Date().toISOString(), guests };
+        if (existing) Object.assign(existing, record);
+        else store.events.push(record);
+        await saveStore(store);
+        return { event: summarize(record), stats: { hits, fetched, total: guests.length } };
+      });
+      return send(res, 202, { jobId: id });
     }
 
     // delete a saved event
@@ -197,19 +197,64 @@ const server = http.createServer(async (req, res) => {
           const meta = await fetchEventMeta(body.url);
           const id = meta.slug || meta.url;
           targetEvent = store.events.find((e) => e.id === id)
-            || { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city };
+            || { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city, guestCount: guests.length };
         }
       }
-      const id = startAnalyze({ guests, targetEvent, store });
+
+      const { id, job } = newJob(guests.length);
+      run(job, async (job) => {
+        // index: profileUrl -> other stored events that person appeared at
+        const seenIndex = new Map();
+        for (const ev of store.events) {
+          if (targetEvent && ev.id === targetEvent.id) continue;
+          for (const g of ev.guests) {
+            if (!seenIndex.has(g.profileUrl)) seenIndex.set(g.profileUrl, []);
+            seenIndex.get(g.profileUrl).push({ id: ev.id, name: ev.name, url: ev.url });
+          }
+        }
+
+        const { people } = await enrichGuests(guests.map((g) => g.profileUrl), store, job);
+        await saveStore(store); // persist any newly cached profiles
+        for (const p of people) { if (!p.error) p.seenAt = seenIndex.get(p.profileUrl) || []; }
+
+        const title = targetEvent?.name || "Luma rolodex";
+        const { peopleFile } = await writeRolodex(people, { title });
+        const known = people.filter((p) => !p.error && p.seenAt?.length).length;
+        return {
+          event: targetEvent ? summarize(targetEvent) : null,
+          people: peopleJson(people),
+          markdown: peopleMd(people, { title }),
+          files: { people: `out/${peopleFile}` },
+          stats: { total: people.length, resolved: people.filter((p) => !p.error).length, known },
+        };
+      });
       return send(res, 202, { jobId: id });
     }
 
-    const job = pathname.match(/^\/api\/analyze\/([\w-]+)$/);
-    if (req.method === "GET" && job) {
-      const j = jobs.get(job[1]);
+    // poll any background job
+    const jobMatch = pathname.match(/^\/api\/job\/([\w-]+)$/);
+    if (req.method === "GET" && jobMatch) {
+      const j = jobs.get(jobMatch[1]);
       if (!j) return send(res, 404, { error: "unknown job" });
       return send(res, 200, { status: j.status, progress: j.progress, error: j.error,
                               result: j.status === "done" ? j.result : null });
+    }
+
+    // export everything (events + cached profiles) as a downloadable backup
+    if (req.method === "GET" && pathname === "/api/export") {
+      const store = await loadStore();
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store",
+                           "content-disposition": 'attachment; filename="luma-intel-backup.json"' });
+      return res.end(JSON.stringify(store, null, 2));
+    }
+
+    // import a previously exported backup (replaces the store)
+    if (req.method === "POST" && pathname === "/api/import") {
+      const body = await readJson(req);
+      if (!body || !Array.isArray(body.events)) return send(res, 400, { error: "invalid backup file" });
+      const store = { events: body.events, people: body.people && typeof body.people === "object" ? body.people : {} };
+      await saveStore(store);
+      return send(res, 200, { events: store.events.length, people: Object.keys(store.people).length });
     }
 
     return send(res, 404, { error: "not found" });
