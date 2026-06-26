@@ -8,19 +8,29 @@
 
 import { fetchPerson } from "./luma.mjs";
 
+// opts:
+//   onProgress(person, index, total, cached)  — after each profile
+//   cache        Map<profileUrl, person>      — already-resolved profiles to reuse
+//   onResolved(person)                         — fired only for freshly fetched profiles
 export async function buildRolodex(profileUrls, opts = {}) {
-  const { onProgress = () => {} } = opts;
+  const { onProgress = () => {}, cache = null, onResolved = () => {} } = opts;
 
   const people = [];
   for (let i = 0; i < profileUrls.length; i++) {
     const url = profileUrls[i];
-    let person;
-    try {
-      person = await fetchPerson(url);
-    } catch (e) {
-      person = { profileUrl: url, error: e.message };
+    let person, cached = false;
+    if (cache && cache.has(url)) {
+      person = cache.get(url);
+      cached = true;
+    } else {
+      try {
+        person = await fetchPerson(url);
+      } catch (e) {
+        person = { profileUrl: url, error: e.message };
+      }
+      if (!person.error) { onResolved(person); cache?.set(url, person); }
     }
-    onProgress(person, i, profileUrls.length);
+    onProgress(person, i, profileUrls.length, cached);
     people.push(person);
   }
   return people;
