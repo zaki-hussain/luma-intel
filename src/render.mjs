@@ -1,90 +1,110 @@
-// Writes the rolodex to disk: machine-readable JSON, a readable per-person
-// markdown outline, a flat CSV, and one markdown file per hosted event whose
-// description we fetched.
+// Writes the rolodex as exactly two files:
+//   out/people.md   — one block per person: profile, socials, bio, counts, and
+//                     their hosted events as title + link (no descriptions here)
+//   out/events.md   — every hosted event's description, collected in one place
+//
+// Pass { json: true } to emit people.json / events.json instead.
 
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
-function csvCell(v = "") {
-  v = String(v ?? "");
-  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+const SOCIAL_KEYS = ["linkedin", "instagram", "twitter", "website", "youtube", "tiktok", "github"];
+const SOCIAL_LABEL = { twitter: "x" };
+const shortDate = (iso) => (iso ? iso.slice(0, 10) : "");
+
+// --- collect unique hosted events across everyone --------------------------
+function collectEvents(people) {
+  const byId = new Map();
+  for (const p of people) {
+    for (const ev of p.hostedEvents || []) {
+      if (!byId.has(ev.apiId)) {
+        byId.set(ev.apiId, { ...ev, hosts: [] });
+      }
+      const host = p.name || p.username || p.profileUrl;
+      const rec = byId.get(ev.apiId);
+      if (!rec.hosts.includes(host)) rec.hosts.push(host);
+    }
+  }
+  return [...byId.values()];
 }
 
-function shortDate(iso) {
-  if (!iso) return "";
-  return iso.slice(0, 10);
-}
-
-export function toMarkdown(people) {
+// --- markdown --------------------------------------------------------------
+function peopleMd(people) {
   const ok = people.filter((p) => !p.error);
-  const out = [
-    `# Luma rolodex`,
-    ``,
-    `${ok.length} people · generated ${new Date().toISOString()}`,
-    `LinkedIn for ${ok.filter((p) => p.socials?.linkedin).length}/${ok.length}.`,
-    ``,
-  ];
+  const out = [`# Luma rolodex — ${ok.length} people`, `generated ${new Date().toISOString()}`, ``];
   for (const p of ok) {
     out.push(`## ${p.name || p.username || "(unknown)"}${p.verified ? " ✓" : ""}`);
-    out.push(`- linkedin: ${p.socials?.linkedin || "— (none on profile)"}`);
-    out.push(`- profile: ${p.profileUrl}${p.username ? `  (@${p.username})` : ""}`);
-    for (const k of ["twitter", "instagram", "website", "youtube", "tiktok", "github"]) {
-      if (p.socials?.[k]) out.push(`- ${k}: ${p.socials[k]}`);
+    if (p.username) out.push(`- username: ${p.username}`);
+    out.push(`- profile: ${p.profileUrl}`);
+    for (const k of SOCIAL_KEYS) {
+      if (p.socials?.[k]) out.push(`- ${SOCIAL_LABEL[k] || k}: ${p.socials[k]}`);
     }
-    if (p.bio) out.push(`- bio: ${p.bio}`);
-    out.push(`- events: hosted ${p.hostedCount ?? "?"}, attended ${p.attendedCount ?? "?"}`);
-    if (p.timezone) out.push(`- timezone: ${p.timezone}`);
+    if (p.bio) out.push(`- bio: ${p.bio.replace(/\n+/g, " ")}`);
+    out.push(`- events attended: ${p.attendedCount ?? "?"}`);
+    out.push(`- events hosted: ${p.hostedCount ?? "?"}`);
     if (p.hostedEvents?.length) {
       out.push(`- hosted events:`);
-      for (const ev of p.hostedEvents) {
-        const bits = [shortDate(ev.startAt), ev.city].filter(Boolean).join(", ");
-        out.push(`  - [${ev.name}](${ev.url})${bits ? ` — ${bits}` : ""}`);
-      }
+      for (const ev of p.hostedEvents) out.push(`  - [${ev.name}](${ev.url})`);
     }
+    out.push("");
+  }
+  const errs = people.filter((p) => p.error);
+  if (errs.length) {
+    out.push(`---`, ``, `## Could not fetch (${errs.length})`);
+    for (const e of errs) out.push(`- ${e.profileUrl} — ${e.error}`);
     out.push("");
   }
   return out.join("\n");
 }
 
-export function toCsv(people) {
-  const header = "name,linkedin,twitter,instagram,website,youtube,profileUrl,username,bio,hostedCount,attendedCount,timezone";
-  const rows = people.filter((p) => !p.error).map((p) => [
-    p.name, p.socials?.linkedin, p.socials?.twitter, p.socials?.instagram, p.socials?.website, p.socials?.youtube,
-    p.profileUrl, p.username, p.bio, p.hostedCount, p.attendedCount, p.timezone,
-  ].map(csvCell).join(","));
-  return [header, ...rows].join("\n");
+function eventsMd(people) {
+  const events = collectEvents(people);
+  const withDesc = events.filter((e) => e.description);
+  const out = [
+    `# Hosted events — ${events.length} events`,
+    `generated ${new Date().toISOString()} · ${withDesc.length} with descriptions`,
+    ``,
+  ];
+  for (const ev of events) {
+    out.push(`## ${ev.name}`);
+    out.push(`- url: ${ev.url}`);
+    if (ev.startAt) out.push(`- date: ${shortDate(ev.startAt)}`);
+    if (ev.city) out.push(`- city: ${ev.city}`);
+    out.push(`- host(s): ${ev.hosts.join(", ")}`);
+    out.push("");
+    if (ev.description) { out.push(ev.description, ""); }
+    out.push(`---`, "");
+  }
+  return out.join("\n");
 }
 
-export async function writeRolodex(people, outDir = "out") {
-  await mkdir(outDir, { recursive: true });
-  await writeFile(path.join(outDir, "rolodex.json"), JSON.stringify(people, null, 2));
-  await writeFile(path.join(outDir, "room.md"), toMarkdown(people));
-  await writeFile(path.join(outDir, "room.csv"), toCsv(people));
+// --- json ------------------------------------------------------------------
+function peopleJson(people) {
+  return people.map((p) => p.error ? p : {
+    name: p.name, username: p.username, profileUrl: p.profileUrl,
+    socials: p.socials,
+    bio: p.bio,
+    attendedCount: p.attendedCount, hostedCount: p.hostedCount,
+    hostedEvents: (p.hostedEvents || []).map((ev) => ({ name: ev.name, url: ev.url })),
+  });
+}
 
-  // one file per hosted event that has a description
-  const eventsDir = path.join(outDir, "events");
-  let eventFiles = 0;
-  const seen = new Set();
-  for (const p of people) {
-    for (const ev of p.hostedEvents || []) {
-      if (!ev.description || seen.has(ev.apiId)) continue;
-      seen.add(ev.apiId);
-      await mkdir(eventsDir, { recursive: true });
-      const fname = (ev.slug || ev.apiId).replace(/[^a-z0-9_-]/gi, "_") + ".md";
-      const body = [
-        `# ${ev.name}`,
-        ``,
-        `- url: ${ev.url}`,
-        ev.startAt ? `- date: ${ev.startAt}` : null,
-        ev.city ? `- city: ${ev.city}` : null,
-        `- host: ${p.name || p.username} (${p.profileUrl})`,
-        ``,
-        ev.description,
-        ``,
-      ].filter((l) => l !== null).join("\n");
-      await writeFile(path.join(eventsDir, fname), body);
-      eventFiles++;
-    }
+function eventsJson(people) {
+  return collectEvents(people).map((ev) => ({
+    name: ev.name, url: ev.url, apiId: ev.apiId,
+    date: ev.startAt, city: ev.city, hosts: ev.hosts,
+    description: ev.description ?? null,
+  }));
+}
+
+export async function writeRolodex(people, { outDir = "out", json = false } = {}) {
+  await mkdir(outDir, { recursive: true });
+  if (json) {
+    await writeFile(path.join(outDir, "people.json"), JSON.stringify(peopleJson(people), null, 2));
+    await writeFile(path.join(outDir, "events.json"), JSON.stringify(eventsJson(people), null, 2));
+    return { peopleFile: "people.json", eventsFile: "events.json" };
   }
-  return { people: people.length, eventFiles };
+  await writeFile(path.join(outDir, "people.md"), peopleMd(people));
+  await writeFile(path.join(outDir, "events.md"), eventsMd(people));
+  return { peopleFile: "people.md", eventsFile: "events.md" };
 }
