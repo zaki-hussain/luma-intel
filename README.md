@@ -10,15 +10,19 @@ you're considering to see which guests you've already crossed paths with.
 ## How it works
 
 - **Save an event you attended.** Paste its Luma URL, paste the guest list, and
-  hit *Save attended event*. Your events are stored in `data/events.json`.
+  hit *Save attended event*. Each guest's profile (LinkedIn / socials / bio) is
+  resolved right then and cached. Events are listed newest-first and stored in
+  `data/events.json`.
 - **Check an event.** Paste a new event's URL + guest list (or click *Check* on a
-  saved one). The page resolves every guest's profile in the background and
-  flags the people you've already been to an event with — and shows *which* of
-  your events you met them at.
+  saved one). The people you've already been to an event with are flagged, with
+  links to *which* of your events you met them at. Profiles seen before are
+  reused from the cache, so only new faces are fetched.
 - **Get the profiles as markdown.** The checked event's full rolodex (name,
   LinkedIn / socials, bio, attended/hosted counts, and shared-event history) is
   available to **Copy markdown** or **Download .md**, and is also written to
   `out/people.md` for manual access.
+- **Export / Import.** Back up everything (events, guest lists, and cached
+  profiles) to a JSON file and restore it later — or move it to another machine.
 
 Pasting reads the `text/html` on your clipboard, so the Luma profile links
 survive (a normal paste throws them away).

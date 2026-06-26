@@ -100,6 +100,11 @@
   <div class="status" id="status"></div>
 
   <h2>Your events</h2>
+  <div class="toolbar">
+    <button id="export">Export data</button>
+    <button id="import">Import data</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden />
+  </div>
   <ul class="evlist" id="evlist"><li class="empty">No saved events yet.</li></ul>
 
   <h2 id="resultsHead" style="display:none">Results</h2>
@@ -228,29 +233,13 @@ function setBar(done, total) {
   bar.style.display = "block"; barFill.style.width = Math.round((done / total) * 100) + "%";
 }
 
-async function save() {
-  if (!eventUrl.value.trim()) return setStatus("Add the event URL first.", true);
-  if (!state.guests.length) return setStatus("Paste the guest list first.", true);
-  setStatus("Saving event…");
-  try {
-    const res = await fetch("/api/events", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: eventUrl.value.trim(), guests: state.guests }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.status);
-    setStatus(`Saved “${data.event.name}” (${data.event.guestCount} guests).`);
-    loadEvents();
-  } catch (e) { setStatus(`Couldn't save (${e.message}).`, true); }
-}
-
-async function analyze(payload) {
-  setStatus("Building the rolodex in the background — reading profiles…");
+// shared: kick off a background job and poll it to completion
+async function startJob(endpoint, payload, onDone) {
+  setStatus("Reading profiles in the background…");
   setBar(0, 1);
-  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
   let jobId;
   try {
-    const res = await fetch("/api/analyze", {
+    const res = await fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -258,26 +247,43 @@ async function analyze(payload) {
     jobId = data.jobId;
   } catch (e) {
     setBar(0, 0);
-    setStatus(`Couldn't start the check (${e.message}). Is the server running ("npm start")?`, true);
+    setStatus(`Couldn't reach the server (${e.message}). Is it running ("npm start")?`, true);
     return;
   }
-  poll(jobId);
+  poll(jobId, onDone);
 }
 
-async function poll(jobId) {
+async function poll(jobId, onDone) {
   let res;
-  try { res = await (await fetch(`/api/analyze/${jobId}`)).json(); }
+  try { res = await (await fetch(`/api/job/${jobId}`)).json(); }
   catch (e) { setStatus(`Lost contact with the server (${e.message}).`, true); return; }
   const pr = res.progress || {};
   if (res.status === "running") {
     setBar(pr.done || 0, pr.total || 1);
     setStatus(`Reading profiles — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
-    return void setTimeout(() => poll(jobId), 600);
+    return void setTimeout(() => poll(jobId, onDone), 600);
   }
-  if (res.status === "error") { setBar(0, 0); setStatus(res.error || "check failed", true); return; }
+  if (res.status === "error") { setBar(0, 0); setStatus(res.error || "job failed", true); return; }
   setBar(1, 1);
-  setStatus(`Done — ${res.result.stats.known} of ${res.result.stats.resolved} guests you've crossed paths with before.`);
-  renderResult(res.result);
+  onDone(res.result);
+}
+
+function save() {
+  if (!eventUrl.value.trim()) return setStatus("Add the event URL first.", true);
+  if (!state.guests.length) return setStatus("Paste the guest list first.", true);
+  startJob("/api/events", { url: eventUrl.value.trim(), guests: state.guests }, (result) => {
+    const s = result.stats;
+    setStatus(`Saved “${result.event.name}” — ${result.event.guestCount} guests (${s.fetched} fetched, ${s.hits} already cached).`);
+    loadEvents();
+  });
+}
+
+function analyze(payload) {
+  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
+  startJob("/api/analyze", payload, (result) => {
+    setStatus(`Done — ${result.stats.known} of ${result.stats.resolved} guests you've crossed paths with before.`);
+    renderResult(result);
+  });
 }
 
 // check the freshly pasted event (uses the URL only to label/exclude it)
@@ -319,6 +325,30 @@ $("downloadMd").addEventListener("click", () => {
   const blob = new Blob([state.result.markdown], { type: "text/markdown" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+});
+
+$("export").addEventListener("click", async () => {
+  try {
+    const text = await (await fetch("/api/export")).text();
+    const blob = new Blob([text], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "luma-intel-backup.json"; a.click(); URL.revokeObjectURL(a.href);
+    setStatus("Exported your events and cached profiles.");
+  } catch (e) { setStatus(`Export failed (${e.message}).`, true); }
+});
+$("import").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const body = await file.text();
+    const res = await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    setStatus(`Imported ${data.events} events and ${data.people} cached profiles.`);
+    loadEvents();
+  } catch (err) { setStatus(`Import failed (${err.message}).`, true); }
+  finally { e.target.value = ""; }
 });
 
 loadEvents();
