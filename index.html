@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>luma-intel · guest list paste capture</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f2430;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #7c9cff;
+    --good: #5ad19a;
+    --warn: #f0b561;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 24px 28px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 20px 28px 60px; max-width: 1100px; }
+  .pastezone {
+    margin-top: 16px;
+    min-height: 140px;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    background: var(--panel);
+    outline: none;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .pastezone:focus { border-color: var(--accent); background: var(--panel-2); }
+  .pastezone:empty::before {
+    content: "Click here, then paste (Cmd/Ctrl+V) your copied Luma guest list…";
+    color: var(--muted);
+  }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; align-items: center; }
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); font-weight: 600; }
+  .stat { color: var(--muted); font-size: 13px; margin-left: auto; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+  td a { color: var(--accent); text-decoration: none; word-break: break-all; }
+  td a:hover { text-decoration: underline; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .tag.profile { color: var(--good); border-color: var(--good); }
+  .tag.other { color: var(--warn); border-color: var(--warn); }
+  details { margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--panel); }
+  summary { cursor: pointer; color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 220px; margin-top: 10px;
+    background: #0b0e14; color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 12px;
+  }
+  .empty { color: var(--muted); padding: 14px 2px; }
+  .pill { display:inline-block; background:var(--panel-2); border:1px solid var(--border); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>luma-intel · guest list capture</h1>
+  <div class="sub">Paste a copied Luma guest list here. This page reads the <span class="pill">text/html</span> on your clipboard, so the profile links survive (normal paste targets throw them away).</div>
+</header>
+
+<main>
+  <div id="zone" class="pastezone" contenteditable="true" spellcheck="false"></div>
+
+  <div class="toolbar">
+    <button class="primary" id="exportRaw">Copy raw captured HTML</button>
+    <button id="exportJson">Download JSON</button>
+    <button id="exportCsv">Download CSV</button>
+    <button id="clear">Clear</button>
+    <span class="stat" id="stat"></span>
+  </div>
+
+  <div id="results">
+    <div class="empty">Nothing captured yet.</div>
+  </div>
+
+  <details id="rawWrap" style="display:none">
+    <summary>Raw captured clipboard HTML (share this with the agent to lock in the exact parser)</summary>
+    <textarea id="raw" readonly></textarea>
+  </details>
+</main>
+
+<script>
+const state = { rawHtml: "", rawText: "", rows: [] };
+
+const zone = document.getElementById("zone");
+const results = document.getElementById("results");
+const stat = document.getElementById("stat");
+const rawWrap = document.getElementById("rawWrap");
+const rawEl = document.getElementById("raw");
+
+// A link is treated as a Luma *profile* if it points at lu.ma and looks like a
+// user/profile route rather than an event/calendar route.
+function classifyLink(href) {
+  let u;
+  try { u = new URL(href, "https://lu.ma"); } catch { return "ignore"; }
+  const host = u.hostname.replace(/^www\./, "");
+  const path = u.pathname;
+  if (host !== "lu.ma" && !host.endsWith(".lu.ma")) {
+    return "external"; // could already be a linkedin/twitter/etc link
+  }
+  if (/^\/(u|user|p)\//i.test(path) || /usr-/i.test(path) || /\/profile/i.test(path)) {
+    return "profile";
+  }
+  return "luma-other";
+}
+
+function parseHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const anchors = [...doc.querySelectorAll("a[href]")];
+  const seen = new Set();
+  const rows = [];
+  for (const a of anchors) {
+    const href = a.getAttribute("href") || "";
+    if (!href || href.startsWith("#") || href.startsWith("javascript:")) continue;
+    // anchor text, falling back to alt text of any nested image
+    let name = (a.textContent || "").replace(/\s+/g, " ").trim();
+    if (!name) {
+      const img = a.querySelector("img[alt]");
+      if (img) name = (img.getAttribute("alt") || "").trim();
+    }
+    const kind = classifyLink(href);
+    if (kind === "ignore") continue;
+    const key = kind + "::" + href + "::" + name;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ name, href, kind });
+  }
+  return rows;
+}
+
+function render() {
+  const rows = state.rows;
+  const profiles = rows.filter(r => r.kind === "profile");
+  stat.textContent = rows.length
+    ? `${rows.length} links · ${profiles.length} look like profiles`
+    : "";
+
+  if (!rows.length) {
+    results.innerHTML = '<div class="empty">Nothing captured yet.</div>';
+    rawWrap.style.display = "none";
+    return;
+  }
+
+  const tagClass = k => k === "profile" ? "profile" : (k === "external" ? "other" : "");
+  const tagLabel = k => ({ profile: "luma profile", "luma-other": "luma (other)", external: "external" })[k] || k;
+
+  results.innerHTML = `
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>URL</th><th>Type</th></tr></thead>
+      <tbody>
+        ${rows.map((r, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(r.name) || '<span class="empty">(no text)</span>'}</td>
+            <td><a href="${escapeAttr(r.href)}" target="_blank" rel="noopener">${escapeHtml(r.href)}</a></td>
+            <td><span class="tag ${tagClass(r.kind)}">${tagLabel(r.kind)}</span></td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+
+  rawWrap.style.display = "block";
+  rawEl.value = state.rawHtml;
+}
+
+function escapeHtml(s = "") {
+  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function escapeAttr(s = "") {
+  return s.replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+zone.addEventListener("paste", (e) => {
+  e.preventDefault();
+  const cd = e.clipboardData || window.clipboardData;
+  const html = cd.getData("text/html");
+  const text = cd.getData("text/plain");
+  state.rawHtml = html || "";
+  state.rawText = text || "";
+  state.rows = html ? parseHtml(html) : [];
+  zone.innerHTML = state.rows.length
+    ? `<div class="empty">Captured ${state.rows.length} links. See the table below.</div>`
+    : `<div class="empty">No HTML links found on the clipboard. The source may have copied plain text only — try the host "Manage guests" view, or share the raw text below.</div>`;
+  render();
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  state.rawHtml = ""; state.rawText = ""; state.rows = [];
+  zone.innerHTML = "";
+  render();
+});
+
+document.getElementById("exportRaw").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(state.rawHtml || ""); alert("Raw captured HTML copied to clipboard."); }
+  catch { rawWrap.open = true; rawEl.focus(); rawEl.select(); }
+});
+
+document.getElementById("exportJson").addEventListener("click", () => {
+  download("luma-guests.json", JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    guests: state.rows.filter(r => r.kind === "profile"),
+    allLinks: state.rows,
+  }, null, 2), "application/json");
+});
+
+document.getElementById("exportCsv").addEventListener("click", () => {
+  const rows = state.rows;
+  const csv = ["name,url,type", ...rows.map(r =>
+    [r.name, r.href, r.kind].map(csvCell).join(",")
+  )].join("\n");
+  download("luma-guests.csv", csv, "text/csv");
+});
+
+function csvCell(v = "") {
+  v = String(v);
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+render();
+</script>
+</body>
+</html>
