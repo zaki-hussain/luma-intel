@@ -26,8 +26,8 @@ keeps the rich version. No screenshots, no manual link-copying.
 ## How it works (two phases)
 
 **Phase 1 — Capture (built, in `index.html`):**
-A single static page with a paste box. You copy the guest list from Luma's host
-view and paste it in. It reads `text/html`, pulls out every link + the name it's
+A single static page with a paste box. You copy the guest list off the event
+page and paste it in. It reads `text/html`, pulls out every link + the name it's
 attached to, flags the ones that look like Luma **profile** links, and lets you
 export JSON/CSV. It also shows the raw captured HTML so we can lock the parser
 to your exact format.
@@ -65,31 +65,36 @@ node enrich.mjs luma-guests.json --delay 1200 --concurrency 2
 
 ---
 
+## Scope
+
+- Used as a **guest** (not host): we work off the raw guest list you can see on
+  an event page and the public profile each name links to.
+- **LinkedIn is the priority** social (surfaced as its own field); X/Twitter and
+  Instagram are captured when present, plus any other links found.
+- We deliberately **ignore Luma "previous/shared events"** — shared events need
+  you to be logged in, and that's a separate future feature (deriving overlap
+  from your own attended-events history rather than scraping per profile).
+
 ## What I need from you to finish this
 
-The capture tool grabs links generically, but to make the parsing and the
-profile-scraping **reliable** I need to see your actual data. Two small things:
+To make parsing **reliable** against the real markup, two small things:
 
-1. **A real captured sample (most important).**
-   Open `index.html`, paste a guest list (even 3–5 people is enough), click
-   **"Copy raw captured HTML"**, and paste that back to me. That shows me the
-   exact link format Luma uses (e.g. `lu.ma/u/usr-…` vs something else) so I can
-   make the "is this a profile?" detection exact instead of heuristic. Feel free
-   to use a public event / scrub names if you're privacy-conscious — I only need
-   the *structure*.
+1. **A real captured HTML sample (most important).** Get the guest-list HTML to
+   me as *text* (links survive once it's a literal `<a href>` string):
+   - **Easiest:** open `index.html`, paste your guest list, click **"Copy raw
+     captured HTML"**, and paste that blob into our chat.
+   - **Or, no tool:** in the browser, right-click a guest's name → *Inspect* →
+     right-click the surrounding row/list element → *Copy → Copy outerHTML* →
+     paste into chat.
+
+   3–5 guests is enough; scrub names if you like — I only need the *structure*.
 
 2. **One real Luma profile URL** (yours is fine) so I can confirm how socials
-   are embedded on the profile page and harden the Phase-2 extractor against the
-   real markup.
+   are embedded on the profile page and harden the extractor.
 
-Also helpful, but optional:
-
-- Are you the **host** of these events? Hosts see the full guest list with
-  profile links; regular attendees may see less. This affects what's available.
-- Roughly **how many guests** per list? (Drives rate-limiting / runtime.)
-- Preferred **output shape** for the "vibe check" — the current `room.md` is one
-  block per person (name, bio, socials). Want a one-line-per-person table, a
-  ranked/grouped view, or fields tuned for feeding into another tool?
+Optional: roughly **how many guests** per list (drives rate-limiting), and your
+preferred **output shape** — current `room.md` is one block per person
+(linkedin, bio, other socials). A one-line-per-person table is easy to add.
 
 ### A couple of honest constraints
 
@@ -100,7 +105,7 @@ Also helpful, but optional:
   LinkedIn rather than logging in to scrape it. Pulling richer LinkedIn detail
   would need a separate, opt-in approach — tell me if you want that.
 - Fetching is rate-limited and cached to stay polite to Luma. This is meant for
-  guest lists you legitimately have access to as a host.
+  guest lists you can already see on events you're attending.
 
 Once you drop in the captured HTML sample + one profile URL, I'll tighten both
 parsers to your exact format and we're done.

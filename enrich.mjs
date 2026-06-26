@@ -40,6 +40,15 @@ const SOCIAL_HOSTS = {
   "warpcast.com": "farcaster",
 };
 
+// LinkedIn is the priority, then X and Instagram; everything else trails.
+const SOCIAL_ORDER = ["linkedin", "twitter", "instagram", "github", "telegram", "youtube", "tiktok", "substack", "medium", "farcaster", "website"];
+function orderSocials(socials) {
+  const out = {};
+  for (const k of SOCIAL_ORDER) if (socials[k]) out[k] = socials[k];
+  for (const k of Object.keys(socials)) if (!(k in out)) out[k] = socials[k];
+  return out;
+}
+
 const args = process.argv.slice(2);
 const inputPath = args.find((a) => !a.startsWith("--"));
 const opt = (name, def) => {
@@ -128,13 +137,14 @@ function extractProfile(url, html, status) {
   const ogTitle = html.match(/<meta property="og:title" content="([^"]+)"/);
   const ogDesc = html.match(/<meta property="og:description" content="([^"]+)"/);
 
-  const socials = classifySocials([...jsonUrls, ...anchorUrls]);
+  const socials = orderSocials(classifySocials([...jsonUrls, ...anchorUrls]));
 
   return {
     profileUrl: url,
     status: status ?? 200,
     name: (ogTitle?.[1] || titleMatch?.[1] || "").replace(/\s+/g, " ").trim() || null,
     bio: ogDesc?.[1]?.trim() || null,
+    linkedin: socials.linkedin?.[0] || null, // priority field for quick scanning
     socials,
     parsed: blobs.length > 0,
     note: blobs.length ? null : "no embedded JSON found — extracted from anchors only",
@@ -159,9 +169,11 @@ function toMarkdown(profiles) {
   const lines = [`# Room outline`, ``, `${profiles.length} guests · generated ${new Date().toISOString()}`, ``];
   for (const p of profiles) {
     lines.push(`## ${p.name || "(unknown)"}`);
+    lines.push(`- linkedin: ${p.linkedin || "— (none on profile)"}`);
     lines.push(`- profile: ${p.profileUrl}`);
     if (p.bio) lines.push(`- bio: ${p.bio}`);
     for (const [k, urls] of Object.entries(p.socials || {})) {
+      if (k === "linkedin") continue; // already surfaced above
       lines.push(`- ${k}: ${urls.join(", ")}`);
     }
     if (p.note) lines.push(`- _${p.note}_`);
