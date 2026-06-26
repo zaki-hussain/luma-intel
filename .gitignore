@@ -1,5 +1,6 @@
 .cache/
 out/
+data/
 node_modules/
 *.log
 luma-guests.json
