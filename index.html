@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>luma-intel · guest list paste capture</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1f2430;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #7c9cff;
+    --good: #5ad19a;
+    --warn: #f0b561;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    padding: 24px 28px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 20px 28px 60px; max-width: 1100px; }
+  .pastezone {
+    margin-top: 16px;
+    min-height: 130px;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    background: var(--panel);
+    outline: none;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .pastezone:focus { border-color: var(--accent); background: var(--panel-2); }
+  .pastezone:empty::before {
+    content: "Click here, then paste (Cmd/Ctrl+V) the Luma guest list you copied…";
+    color: var(--muted);
+  }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; align-items: center; }
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); font-weight: 600; }
+  .stat { color: var(--muted); font-size: 13px; margin-left: auto; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+  td a { color: var(--accent); text-decoration: none; word-break: break-all; }
+  td a:hover { text-decoration: underline; }
+  .soc { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  .soc a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+  details { margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--panel); }
+  summary { cursor: pointer; color: var(--muted); }
+  textarea {
+    width: 100%; min-height: 200px; margin-top: 10px;
+    background: #0b0e14; color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 12px;
+  }
+  .empty { color: var(--muted); padding: 14px 2px; }
+  .pill { display:inline-block; background:var(--panel-2); border:1px solid var(--border); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>luma-intel · guest list capture</h1>
+  <div class="sub">Paste a copied Luma guest list here. This page reads the <span class="pill">text/html</span> on your clipboard, so the profile links survive (normal paste targets throw them away). Then run <span class="pill">node enrich.mjs luma-guests.json</span> to resolve LinkedIn &amp; socials.</div>
+</header>
+
+<main>
+  <div id="zone" class="pastezone" contenteditable="true" spellcheck="false"></div>
+
+  <div class="toolbar">
+    <button class="primary" id="exportJson">Download JSON (for enrich.mjs)</button>
+    <button id="exportCsv">Download CSV</button>
+    <button id="copyRaw">Copy raw captured HTML</button>
+    <button id="clear">Clear</button>
+    <span class="stat" id="stat"></span>
+  </div>
+
+  <div id="results">
+    <div class="empty">Nothing captured yet.</div>
+  </div>
+
+  <details id="rawWrap" style="display:none">
+    <summary>Raw captured clipboard HTML</summary>
+    <textarea id="raw" readonly></textarea>
+  </details>
+</main>
+
+<script>
+const LUMA_BASE = "https://luma.com";
+const state = { rawHtml: "", guests: [] };
+
+const zone = document.getElementById("zone");
+const results = document.getElementById("results");
+const stat = document.getElementById("stat");
+const rawWrap = document.getElementById("rawWrap");
+const rawEl = document.getElementById("raw");
+
+// Socials Luma can show inline in the guest list (LinkedIn lives on the profile page).
+const SOCIAL_HOSTS = {
+  "linkedin.com": "linkedin", "lnkd.in": "linkedin",
+  "x.com": "twitter", "twitter.com": "twitter",
+  "instagram.com": "instagram", "github.com": "github",
+  "t.me": "telegram", "tiktok.com": "tiktok", "youtube.com": "youtube",
+};
+
+function classifySocial(href) {
+  let u;
+  try { u = new URL(href); } catch { return null; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname.replace(/^www\./, "");
+  const kind = SOCIAL_HOSTS[host];
+  return kind ? { kind, url: u.href } : null;
+}
+
+// A Luma profile link looks like /user/<username|usr-id> (relative in the copied list).
+function profilePath(href) {
+  try {
+    const u = new URL(href, LUMA_BASE);
+    if (/^\/user\/[^/]+/.test(u.pathname)) return u.pathname.replace(/\/$/, "");
+  } catch {}
+  return null;
+}
+
+function cleanName(s) {
+  return (s || "").replace(/^Profile picture for\s*/i, "").replace(/\s+/g, " ").trim();
+}
+
+function parseHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const guests = [];
+  const seen = new Set();
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const path = profilePath(a.getAttribute("href") || "");
+    if (!path) continue;
+    const profileUrl = LUMA_BASE + path;
+    if (seen.has(profileUrl)) continue;
+    seen.add(profileUrl);
+
+    let name = "";
+    const nameEl = a.querySelector(".name");
+    if (nameEl) name = nameEl.getAttribute("title") || nameEl.textContent;
+    if (!name) {
+      const img = a.querySelector("img[alt], img[title]");
+      if (img) name = img.getAttribute("alt") || img.getAttribute("title");
+    }
+    if (!name) name = a.textContent;
+    name = cleanName(name);
+
+    // inline socials live as sibling anchors in the same guest row
+    const row = a.parentElement || a;
+    const socials = {};
+    for (const s of row.querySelectorAll('a[href^="http"]')) {
+      const c = classifySocial(s.getAttribute("href"));
+      if (c) (socials[c.kind] ||= new Set()).add(c.url);
+    }
+    const flat = Object.fromEntries(Object.entries(socials).map(([k, v]) => [k, [...v]]));
+
+    guests.push({ name, profileUrl, username: path.replace("/user/", ""), socials: flat });
+  }
+  return guests;
+}
+
+function render() {
+  const guests = state.guests;
+  const withSoc = guests.filter(g => Object.keys(g.socials).length).length;
+  stat.textContent = guests.length ? `${guests.length} guests · ${withSoc} with inline socials` : "";
+
+  if (!guests.length) {
+    results.innerHTML = '<div class="empty">Nothing captured yet.</div>';
+    rawWrap.style.display = "none";
+    return;
+  }
+
+  results.innerHTML = `
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Luma profile</th><th>Inline socials</th></tr></thead>
+      <tbody>
+        ${guests.map((g, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${escapeHtml(g.name) || '<span class="empty">(no name)</span>'}</td>
+            <td><a href="${escapeAttr(g.profileUrl)}" target="_blank" rel="noopener">${escapeHtml(g.profileUrl.replace("https://luma.com", ""))}</a></td>
+            <td><span class="soc">${
+              Object.entries(g.socials).flatMap(([k, urls]) =>
+                urls.map(u => `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${k}</a>`)
+              ).join("") || '<span class="empty">—</span>'
+            }</span></td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+
+  rawWrap.style.display = "block";
+  rawEl.value = state.rawHtml;
+}
+
+function escapeHtml(s = "") {
+  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function escapeAttr(s = "") {
+  return s.replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+zone.addEventListener("paste", (e) => {
+  e.preventDefault();
+  const cd = e.clipboardData || window.clipboardData;
+  const html = cd.getData("text/html");
+  state.rawHtml = html || "";
+  state.guests = html ? parseHtml(html) : [];
+  zone.innerHTML = state.guests.length
+    ? `<div class="empty">Captured ${state.guests.length} guests. See the table below, then download the JSON.</div>`
+    : `<div class="empty">No Luma profile links found. Make sure you copied the guest list rows (each name links to /user/…). Try selecting the list and copying again.</div>`;
+  render();
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  state.rawHtml = ""; state.guests = [];
+  zone.innerHTML = "";
+  render();
+});
+
+document.getElementById("copyRaw").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(state.rawHtml || ""); alert("Raw captured HTML copied to clipboard."); }
+  catch { rawWrap.open = true; rawEl.focus(); rawEl.select(); }
+});
+
+document.getElementById("exportJson").addEventListener("click", () => {
+  download("luma-guests.json", JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    count: state.guests.length,
+    guests: state.guests,
+  }, null, 2), "application/json");
+});
+
+document.getElementById("exportCsv").addEventListener("click", () => {
+  const header = "name,profileUrl,username,instagram,twitter";
+  const rows = state.guests.map(g => [
+    g.name, g.profileUrl, g.username,
+    (g.socials.instagram || []).join(" "), (g.socials.twitter || []).join(" "),
+  ].map(csvCell).join(","));
+  download("luma-guests.csv", [header, ...rows].join("\n"), "text/csv");
+});
+
+function csvCell(v = "") {
+  v = String(v);
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+render();
+</script>
+</body>
+</html>
