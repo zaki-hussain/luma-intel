@@ -1,10 +1,9 @@
 {
   "name": "luma-intel",
   "version": "0.1.0",
-  "description": "Paste a Luma guest list, keep the profile URLs, and resolve everyone's socials into a deterministic outline.",
+  "description": "The ultimate Luma rolodex: paste a guest list, keep the profile URLs, and deterministically resolve everyone's socials, bio, and hosted events.",
   "type": "module",
   "scripts": {
-    "capture": "node -e \"console.log('Open index.html in your browser (or run: npx serve .)')\"",
     "serve": "npx --yes serve .",
     "enrich": "node enrich.mjs"
   },

@@ -1,109 +1,143 @@
 # luma-intel
 
-Paste a Luma guest list, keep the profile links (which normal paste targets
-throw away), resolve everyone's **LinkedIn** + other socials, and produce a
-deterministic outline you can read or feed into something else to vibe-check
-the room.
+The ultimate Luma rolodex. Paste a Luma guest list, keep the profile links
+(which normal paste targets throw away), and deterministically build a record of
+everyone in the room:
 
-Status: **working against real Luma data.** Verified on a real guest list and
-real profiles (LinkedIn / X / Instagram / website / bio / timezone / past-event
-counts all extracted).
+- name, Luma username + profile URL
+- **LinkedIn** (priority), Instagram, X/Twitter, website, YouTube — whatever they
+  listed
+- their Luma bio
+- events attended count
+- events hosted count **+ the full list of hosted events with URLs**, and
+  optionally each event's saved description
 
----
-
-## The core problem (and why it's solvable)
-
-When you copy a guest list off a web page and paste it somewhere, the links
-usually vanish and you're left with plain names. That's because your clipboard
-holds **two** copies of what you copied:
-
-- `text/plain` — just the visible text, no links
-- `text/html` — the real markup, **including `<a href="/user/…">` to each profile**
-
-Most inputs only read `text/plain`, so the URLs die. The capture page here reads
-`text/html` instead, so the links survive.
+Status: **working against real Luma data** (verified on a real guest list, real
+profiles, and real hosted-event descriptions).
 
 ---
 
-## How it works (two phases)
+## Why links get stripped (and the fix)
+
+Copying off a web page puts two things on your clipboard: `text/plain` (no links)
+and `text/html` (the real markup, including `<a href="/user/…">`). Most inputs
+read only `text/plain`, so the URLs die. The capture page reads `text/html`.
+
+---
+
+## Pipeline
 
 ```
-Luma guest list ──copy──▶ index.html ──luma-guests.json──▶ enrich.mjs ──▶ out/room.md + room.csv
-   (text/html)            (keeps links)                    (LinkedIn-first socials)
+Luma guest list ─copy─▶ index.html ─luma-guests.json─▶ enrich.mjs ─▶ out/rolodex.json
+   (text/html)          (keeps links)                  (resolve everything)   room.md
+                                                                              room.csv
+                                                                              events/*.md
 ```
 
-**Phase 1 — Capture (`index.html`):**
-A static page with a paste box. Paste the copied guest list; it reads
-`text/html`, finds every `/user/<username|usr-id>` profile link with the guest's
-name, captures any socials shown inline in the list, and exports
-`luma-guests.json` / CSV.
+1. **Capture** — open `index.html`, paste the copied guest list, download
+   `luma-guests.json` (name + `/user/…` link per guest, plus any inline socials).
+2. **Enrich** — `enrich.mjs` fetches each profile and (optionally) their hosted
+   events + descriptions, writing the rolodex.
 
-**Phase 2 — Enrich (`enrich.mjs`):**
-For each profile it fetches the page once (cached + rate-limited) and reads the
-structured user object Luma embeds in `<script id="__NEXT_DATA__">`:
-
-| field | example | becomes |
-| --- | --- | --- |
-| `linkedin_handle` | `/in/joshuavantard` | `https://www.linkedin.com/in/joshuavantard` |
-| `twitter_handle` | `joinicp` | `https://x.com/joinicp` |
-| `instagram_handle` | `joshuavantard` | `https://instagram.com/joshuavantard` |
-| `website` | `https://linktr.ee/joshuavantard` | (as-is) |
-| `bio_short`, `timezone`, `is_verified` | | profile context |
-| `event_hosted_count` / `event_attended_count` | `34` / `362` | "has hosted events" signal |
-
-LinkedIn is surfaced as the priority field. **`event_together_count` ("shared
-events") is deliberately ignored** — it requires being logged in and is always 0
-otherwise. Same input → same output, no LLM in the loop.
+`enrich.mjs` also accepts a raw copied guest-list `.html` file or a `.txt`/`.csv`
+of `/user/` URLs, so you can skip the browser step.
 
 ---
 
 ## Usage
 
 ```bash
-# Phase 1: open the capture page, paste the list, download luma-guests.json
-npx serve .            # then open the printed localhost URL
-# (or just open index.html directly in a browser)
+# capture page (or just open index.html in a browser)
+npx serve .
 
-# Phase 2: resolve socials
-node enrich.mjs luma-guests.json --delay 1200 --concurrency 2
-#   → out/profiles.json   (full structured data)
-#   → out/room.md         (readable, one block per guest, LinkedIn first)
-#   → out/room.csv        (spreadsheet-friendly)
+# basic rolodex: name, socials, bio, counts
+node enrich.mjs luma-guests.json
+
+# + list every event each person has hosted (name + lu.ma URL + date + city)
+node enrich.mjs luma-guests.json --events
+
+# + also fetch & save each hosted event's description to out/events/
+node enrich.mjs luma-guests.json --events --descriptions
+
+# LinkedIn (see below)
+node enrich.mjs luma-guests.json --linkedin
 ```
 
-`enrich.mjs` also accepts a raw copied guest-list `.html` file or a `.txt`/`.csv`
-of `/user/` URLs, so you can skip the browser step if you prefer:
+Flags: `--events`, `--descriptions`, `--linkedin`, `--delay <ms>` (default 1000),
+`--concurrency <n>` (default 2), `--max <n>`. Everything is cached in `.cache/`
+so re-runs are instant and don't re-hit Luma.
 
-```bash
-node enrich.mjs guest-list.html
-```
+### Outputs (`out/`)
+
+- `rolodex.json` — full structured data (the source of truth)
+- `room.md` — readable, one block per person, LinkedIn first, with hosted events
+- `room.csv` — spreadsheet-friendly
+- `events/<slug>.md` — one file per hosted event with its description
 
 ---
 
-## Example output (`out/room.md`)
+## How the data is sourced (deterministic, no LLM)
+
+- **Profile** (`/user/<username|usr-id>`): the page embeds a structured user
+  object in `<script id="__NEXT_DATA__">` — `linkedin_handle`, `twitter_handle`,
+  `instagram_handle`, `website`, `bio_short`, `timezone`, `is_verified`,
+  `event_hosted_count`, `event_attended_count`.
+- **Hosted events**: `GET api.lu.ma/user/profile/events-hosting?user_api_id=…&period=past`
+  (paginated) → each event's name, `lu.ma` URL, date, city.
+- **Event description**: `GET api.lu.ma/event/get?event_api_id=…` →
+  `description_mirror` (ProseMirror) flattened to text.
+- We deliberately ignore `event_together_count` ("shared events"), which needs
+  you to be logged in.
+
+---
+
+## LinkedIn deep data (work history / education) — what's actually possible
+
+You asked whether we can scrape everyone's LinkedIn (where they work, worked,
+studied). Honest answer: **not by directly scraping LinkedIn.** LinkedIn gates
+profiles behind an auth wall, aggressively blocks bots, and its ToS forbids
+scraping; the official API won't return arbitrary people's history. So we don't
+pretend to — we surface the LinkedIn **URL** and offer two real routes:
+
+1. **Deterministic, paid — a third-party enrichment API.** We support
+   **Proxycurl**: set `PROXYCURL_API_KEY` and run `--linkedin`. It takes the
+   LinkedIn URL we already extracted and returns structured roles + education,
+   attached to each person as `linkedinProfile`. (Costs credits; this is the
+   clean automated route. Others like People Data Labs / Bright Data are
+   equivalent swaps.)
+
+2. **Free, manual/AI-assisted — a research packet.** With no key, `--linkedin`
+   writes `out/linkedin-research.md` and `.jsonl`: one task per person (LinkedIn
+   URL + bio + website + handles) designed to be pasted into a **separate AI
+   agent with web browsing** that does the lookups and returns structured
+   role/education JSON. This is the "paste a lot of info into another agent"
+   tool you described — kept separate on purpose.
+
+---
+
+## Project structure
 
 ```
-## Joshua Vantard
-- linkedin: https://www.linkedin.com/in/joshuavantard
-- profile: https://luma.com/user/joshuavantard
-- twitter: https://x.com/joinicp
-- instagram: https://instagram.com/joshuavantard
-- website: https://linktr.ee/joshuavantard
-- events: hosted 34, attended 362
-- timezone: Europe/London
+index.html            # Phase 1: clipboard capture (browser)
+enrich.mjs            # CLI entry
+src/
+  net.mjs             # cached, rate-limited HTTP (global limiter)
+  input.mjs           # load /user/ URLs from json / html / txt
+  luma.mjs            # profile parse, hosted-events pagination, event fetch
+  prosemirror.mjs     # flatten event description_mirror -> text
+  rolodex.mjs         # orchestrate person records (+ events, + descriptions)
+  render.mjs          # write rolodex.json, room.md, room.csv, events/*.md
+  linkedin.mjs        # Proxycurl enrichment OR free research packet
 ```
 
 ---
 
 ## Notes / constraints
 
-- We surface socials the person put on their Luma profile. Most have LinkedIn;
-  some add X/Instagram/website. Profiles with nothing still return name + bio +
-  past-event counts + timezone.
-- LinkedIn blocks scraping, so we surface the **link**, not scraped LinkedIn
-  content. Going deeper would need a separate, opt-in approach.
-- Fetching is cached (`.cache/`) and rate-limited to stay polite to Luma. For a
-  large list, keep `--concurrency` low (2) and `--delay` ≥ 1000ms.
+- We only surface socials a person put on their Luma profile.
+- Fetching is cached + rate-limited; for a big list keep `--concurrency 2` and
+  `--delay` ≥ 1000ms. `--descriptions` makes one extra request per hosted event,
+  so it's the slowest mode (still cached).
 - "Shared events" (people you've overlapped with) need login and are out of
-  scope; a future version could derive overlap from your own attended-events
-  history instead of per-profile scraping.
+  scope — a future feature could derive overlap from your own attended-events
+  history.
