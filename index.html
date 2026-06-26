@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>luma-intel · guest list paste capture</title>
+<title>luma-intel</title>
 <style>
   :root {
     --bg: #0f1115;
@@ -25,15 +25,14 @@
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   header {
-    padding: 24px 28px 8px;
+    padding: 24px 28px 14px;
     border-bottom: 1px solid var(--border);
   }
-  h1 { margin: 0 0 4px; font-size: 20px; }
-  .sub { color: var(--muted); font-size: 13px; }
+  h1 { margin: 0; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
   main { padding: 20px 28px 60px; max-width: 1100px; }
   .pastezone {
-    margin-top: 16px;
-    min-height: 130px;
+    min-height: 120px;
     border: 2px dashed var(--border);
     border-radius: 12px;
     padding: 18px;
@@ -57,79 +56,62 @@
     font-size: 13px;
   }
   button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); color: #0b0e14; border-color: var(--accent); font-weight: 600; }
   .stat { color: var(--muted); font-size: 13px; margin-left: auto; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
-  td a { color: var(--accent); text-decoration: none; word-break: break-all; }
-  td a:hover { text-decoration: underline; }
+  .status { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .status.err { color: var(--warn); }
+  .bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin-top: 10px; display: none; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+  .person { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-top: 12px; background: var(--panel); }
+  .person h3 { margin: 0 0 6px; font-size: 16px; }
+  .person h3 .ok { color: var(--good); font-size: 12px; margin-left: 6px; }
+  .meta { color: var(--muted); font-size: 13px; margin: 2px 0; }
+  .meta .lbl { color: var(--muted); display: inline-block; min-width: 96px; }
+  .bio { font-size: 13px; margin: 6px 0; }
+  a { color: var(--accent); text-decoration: none; word-break: break-word; }
+  a:hover { text-decoration: underline; }
   .soc { display: inline-flex; gap: 8px; flex-wrap: wrap; }
-  .soc a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
-  details { margin-top: 22px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; background: var(--panel); }
-  summary { cursor: pointer; color: var(--muted); }
-  textarea {
-    width: 100%; min-height: 200px; margin-top: 10px;
-    background: #0b0e14; color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 12px;
-  }
+  .soc a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; }
+  .events { margin: 6px 0 0; padding-left: 18px; }
+  .events li { font-size: 13px; margin: 2px 0; }
   .empty { color: var(--muted); padding: 14px 2px; }
-  .pill { display:inline-block; background:var(--panel-2); border:1px solid var(--border); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--muted); }
+  .files { color: var(--muted); font-size: 12px; margin-top: 16px; }
+  .files code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>luma-intel · guest list capture</h1>
-  <div class="sub">Paste a copied Luma guest list here. This page reads the <span class="pill">text/html</span> on your clipboard, so the profile links survive (normal paste targets throw them away). Then run <span class="pill">node enrich.mjs luma-guests.json</span> to resolve LinkedIn &amp; socials.</div>
+  <h1>luma-intel</h1>
+  <div class="sub">Copy and paste the Luma guest list.</div>
 </header>
 
 <main>
   <div id="zone" class="pastezone" contenteditable="true" spellcheck="false"></div>
 
   <div class="toolbar">
-    <button class="primary" id="exportJson">Download JSON (for enrich.mjs)</button>
-    <button id="exportCsv">Download CSV</button>
-    <button id="copyRaw">Copy raw captured HTML</button>
     <button id="clear">Clear</button>
     <span class="stat" id="stat"></span>
   </div>
+  <div class="bar" id="bar"><i></i></div>
+  <div class="status" id="status"></div>
 
   <div id="results">
     <div class="empty">Nothing captured yet.</div>
   </div>
 
-  <details id="rawWrap" style="display:none">
-    <summary>Raw captured clipboard HTML</summary>
-    <textarea id="raw" readonly></textarea>
-  </details>
+  <div class="files" id="files"></div>
 </main>
 
 <script>
 const LUMA_BASE = "https://luma.com";
-const state = { rawHtml: "", guests: [] };
+const state = { guests: [] };
 
 const zone = document.getElementById("zone");
 const results = document.getElementById("results");
 const stat = document.getElementById("stat");
-const rawWrap = document.getElementById("rawWrap");
-const rawEl = document.getElementById("raw");
-
-// Socials Luma can show inline in the guest list (LinkedIn lives on the profile page).
-const SOCIAL_HOSTS = {
-  "linkedin.com": "linkedin", "lnkd.in": "linkedin",
-  "x.com": "twitter", "twitter.com": "twitter",
-  "instagram.com": "instagram", "github.com": "github",
-  "t.me": "telegram", "tiktok.com": "tiktok", "youtube.com": "youtube",
-};
-
-function classifySocial(href) {
-  let u;
-  try { u = new URL(href); } catch { return null; }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-  const host = u.hostname.replace(/^www\./, "");
-  const kind = SOCIAL_HOSTS[host];
-  return kind ? { kind, url: u.href } : null;
-}
+const statusEl = document.getElementById("status");
+const bar = document.getElementById("bar");
+const barFill = bar.querySelector("i");
+const filesEl = document.getElementById("files");
 
 // A Luma profile link looks like /user/<username|usr-id> (relative in the copied list).
 function profilePath(href) {
@@ -165,114 +147,142 @@ function parseHtml(html) {
     if (!name) name = a.textContent;
     name = cleanName(name);
 
-    // inline socials live as sibling anchors in the same guest row
-    const row = a.parentElement || a;
-    const socials = {};
-    for (const s of row.querySelectorAll('a[href^="http"]')) {
-      const c = classifySocial(s.getAttribute("href"));
-      if (c) (socials[c.kind] ||= new Set()).add(c.url);
-    }
-    const flat = Object.fromEntries(Object.entries(socials).map(([k, v]) => [k, [...v]]));
-
-    guests.push({ name, profileUrl, username: path.replace("/user/", ""), socials: flat });
+    guests.push({ name, profileUrl, username: path.replace("/user/", "") });
   }
   return guests;
 }
 
-function render() {
-  const guests = state.guests;
-  const withSoc = guests.filter(g => Object.keys(g.socials).length).length;
-  stat.textContent = guests.length ? `${guests.length} guests · ${withSoc} with inline socials` : "";
+const SOCIAL_LABEL = { twitter: "x" };
+const SOCIAL_KEYS = ["linkedin", "instagram", "twitter", "website", "youtube", "tiktok", "github"];
 
-  if (!guests.length) {
-    results.innerHTML = '<div class="empty">Nothing captured yet.</div>';
-    rawWrap.style.display = "none";
-    return;
+function socialsHtml(socials = {}) {
+  const items = SOCIAL_KEYS
+    .filter((k) => socials[k])
+    .map((k) => `<a href="${escapeAttr(socials[k])}" target="_blank" rel="noopener">${SOCIAL_LABEL[k] || k}</a>`);
+  return items.length ? `<span class="soc">${items.join("")}</span>` : '<span class="empty">—</span>';
+}
+
+function personHtml(p) {
+  if (p.error) {
+    return `<div class="person"><h3>${escapeHtml(p.profileUrl)}</h3>
+      <div class="meta">could not fetch — ${escapeHtml(p.error)}</div></div>`;
   }
+  const events = (p.hostedEvents || []).map((ev) =>
+    `<li><a href="${escapeAttr(ev.url || "#")}" target="_blank" rel="noopener">${escapeHtml(ev.name || ev.url)}</a></li>`
+  ).join("");
+  return `<div class="person">
+    <h3>${escapeHtml(p.name || p.username || "(unknown)")}</h3>
+    <div class="meta"><span class="lbl">profile</span><a href="${escapeAttr(p.profileUrl)}" target="_blank" rel="noopener">${escapeHtml(p.profileUrl.replace("https://luma.com", "luma.com"))}</a></div>
+    <div class="meta"><span class="lbl">socials</span>${socialsHtml(p.socials)}</div>
+    ${p.bio ? `<div class="bio">${escapeHtml(p.bio)}</div>` : ""}
+    <div class="meta"><span class="lbl">attended</span>${p.attendedCount ?? "?"} &nbsp;·&nbsp; hosted ${p.hostedCount ?? "?"}</div>
+    ${events ? `<ul class="events">${events}</ul>` : ""}
+  </div>`;
+}
 
-  results.innerHTML = `
-    <table>
-      <thead><tr><th>#</th><th>Name</th><th>Luma profile</th><th>Inline socials</th></tr></thead>
-      <tbody>
-        ${guests.map((g, i) => `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${escapeHtml(g.name) || '<span class="empty">(no name)</span>'}</td>
-            <td><a href="${escapeAttr(g.profileUrl)}" target="_blank" rel="noopener">${escapeHtml(g.profileUrl.replace("https://luma.com", ""))}</a></td>
-            <td><span class="soc">${
-              Object.entries(g.socials).flatMap(([k, urls]) =>
-                urls.map(u => `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${k}</a>`)
-              ).join("") || '<span class="empty">—</span>'
-            }</span></td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`;
-
-  rawWrap.style.display = "block";
-  rawEl.value = state.rawHtml;
+function renderPeople(people) {
+  const ok = people.filter((p) => !p.error);
+  stat.textContent = `${ok.length} people resolved`;
+  results.innerHTML = people.length
+    ? people.map(personHtml).join("")
+    : '<div class="empty">No one resolved.</div>';
 }
 
 function escapeHtml(s = "") {
-  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 function escapeAttr(s = "") {
-  return s.replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return String(s).replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function setStatus(msg, isErr = false) {
+  statusEl.textContent = msg || "";
+  statusEl.classList.toggle("err", !!isErr);
+}
+function setBar(done, total) {
+  if (!total) { bar.style.display = "none"; return; }
+  bar.style.display = "block";
+  barFill.style.width = Math.round((done / total) * 100) + "%";
+}
+
+async function enrich(guests) {
+  setStatus("Building the rolodex in the background — reading profiles…");
+  setBar(0, 1);
+  let jobId;
+  try {
+    const res = await fetch("/api/enrich", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ guests }),
+    });
+    if (!res.ok) throw new Error(`server responded ${res.status}`);
+    ({ jobId } = await res.json());
+  } catch (e) {
+    setBar(0, 0);
+    setStatus(`Couldn't reach the local server (${e.message}). Start it with "npm start", then reload this page.`, true);
+    return;
+  }
+  poll(jobId);
+}
+
+async function poll(jobId) {
+  let res;
+  try {
+    res = await (await fetch(`/api/enrich/${jobId}`)).json();
+  } catch (e) {
+    setStatus(`Lost contact with the server (${e.message}).`, true);
+    return;
+  }
+  const pr = res.progress || {};
+  if (res.status === "running") {
+    const label = pr.phase === "descriptions" ? "Reading hosted-event descriptions" : "Reading profiles";
+    setBar(pr.done || 0, pr.total || 1);
+    setStatus(`${label} — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
+    setTimeout(() => poll(jobId), 600);
+    return;
+  }
+  if (res.status === "error") {
+    setBar(0, 0);
+    setStatus(res.error || "enrichment failed", true);
+    return;
+  }
+  // done
+  setBar(1, 1);
+  setStatus(`Done — ${res.result.people.filter(p => !p.error).length} profiles resolved.`);
+  renderPeople(res.result.people);
+  if (res.result.files) {
+    filesEl.innerHTML =
+      `Also saved for manual access: <code>${escapeHtml(res.result.files.people)}</code> and <code>${escapeHtml(res.result.files.events)}</code>.`;
+  }
 }
 
 zone.addEventListener("paste", (e) => {
   e.preventDefault();
   const cd = e.clipboardData || window.clipboardData;
   const html = cd.getData("text/html");
-  state.rawHtml = html || "";
   state.guests = html ? parseHtml(html) : [];
-  zone.innerHTML = state.guests.length
-    ? `<div class="empty">Captured ${state.guests.length} guests. See the table below, then download the JSON.</div>`
-    : `<div class="empty">No Luma profile links found. Make sure you copied the guest list rows (each name links to /user/…). Try selecting the list and copying again.</div>`;
-  render();
+  if (!state.guests.length) {
+    zone.innerHTML = `<div class="empty">No Luma profile links found. Select the guest-list rows (each name links to /user/…) and copy again.</div>`;
+    setStatus("");
+    setBar(0, 0);
+    return;
+  }
+  zone.innerHTML = `<div class="empty">Captured ${state.guests.length} guests. Enriching…</div>`;
+  results.innerHTML = '<div class="empty">Working…</div>';
+  filesEl.textContent = "";
+  stat.textContent = `${state.guests.length} captured`;
+  enrich(state.guests);
 });
 
 document.getElementById("clear").addEventListener("click", () => {
-  state.rawHtml = ""; state.guests = [];
+  state.guests = [];
   zone.innerHTML = "";
-  render();
+  results.innerHTML = '<div class="empty">Nothing captured yet.</div>';
+  stat.textContent = "";
+  filesEl.textContent = "";
+  setStatus("");
+  setBar(0, 0);
 });
-
-document.getElementById("copyRaw").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(state.rawHtml || ""); alert("Raw captured HTML copied to clipboard."); }
-  catch { rawWrap.open = true; rawEl.focus(); rawEl.select(); }
-});
-
-document.getElementById("exportJson").addEventListener("click", () => {
-  download("luma-guests.json", JSON.stringify({
-    capturedAt: new Date().toISOString(),
-    count: state.guests.length,
-    guests: state.guests,
-  }, null, 2), "application/json");
-});
-
-document.getElementById("exportCsv").addEventListener("click", () => {
-  const header = "name,profileUrl,username,instagram,twitter";
-  const rows = state.guests.map(g => [
-    g.name, g.profileUrl, g.username,
-    (g.socials.instagram || []).join(" "), (g.socials.twitter || []).join(" "),
-  ].map(csvCell).join(","));
-  download("luma-guests.csv", [header, ...rows].join("\n"), "text/csv");
-});
-
-function csvCell(v = "") {
-  v = String(v);
-  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
-}
-function download(name, content, type) {
-  const blob = new Blob([content], { type });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-render();
 </script>
 </body>
 </html>
