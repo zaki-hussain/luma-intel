@@ -4,7 +4,7 @@
   "description": "The ultimate Luma rolodex: paste a guest list, keep the profile URLs, and deterministically resolve everyone's socials, bio, and hosted events.",
   "type": "module",
   "scripts": {
-    "serve": "npx --yes serve .",
+    "start": "node server.mjs",
     "enrich": "node enrich.mjs"
   },
   "license": "MIT"

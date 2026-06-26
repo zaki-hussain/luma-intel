@@ -79,7 +79,7 @@ function eventsMd(people) {
 }
 
 // --- json ------------------------------------------------------------------
-function peopleJson(people) {
+export function peopleJson(people) {
   return people.map((p) => p.error ? p : {
     name: p.name, username: p.username, profileUrl: p.profileUrl,
     socials: p.socials,
@@ -89,7 +89,7 @@ function peopleJson(people) {
   });
 }
 
-function eventsJson(people) {
+export function eventsJson(people) {
   return collectEvents(people).map((ev) => ({
     name: ev.name, url: ev.url, apiId: ev.apiId,
     date: ev.startAt, city: ev.city, hosts: ev.hosts,
