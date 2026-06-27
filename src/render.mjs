@@ -1,37 +1,21 @@
-// Writes the rolodex as exactly two files:
-//   out/people.md   — one block per person: profile, socials, bio, counts, and
-//                     their hosted events as title + link (no descriptions here)
-//   out/events.md   — every hosted event's description, collected in one place
+// Writes the rolodex of people as out/people.md (and exposes the same as JSON
+// for the page). Each person block carries name, username, profile URL,
+// LinkedIn / socials, bio, attended/hosted counts, and — when known — the list
+// of your own events you've previously crossed paths with them at.
 //
-// Pass { json: true } to emit people.json / events.json instead.
+// NOTE: the per-event description file (out/events.md) belonged to the parked
+// "hosted events" feature; that renderer is preserved (commented) at the bottom.
 
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
 const SOCIAL_KEYS = ["linkedin", "instagram", "twitter", "website", "youtube", "tiktok", "github"];
 const SOCIAL_LABEL = { twitter: "x" };
-const shortDate = (iso) => (iso ? iso.slice(0, 10) : "");
 
-// --- collect unique hosted events across everyone --------------------------
-function collectEvents(people) {
-  const byId = new Map();
-  for (const p of people) {
-    for (const ev of p.hostedEvents || []) {
-      if (!byId.has(ev.apiId)) {
-        byId.set(ev.apiId, { ...ev, hosts: [] });
-      }
-      const host = p.name || p.username || p.profileUrl;
-      const rec = byId.get(ev.apiId);
-      if (!rec.hosts.includes(host)) rec.hosts.push(host);
-    }
-  }
-  return [...byId.values()];
-}
-
-// --- markdown --------------------------------------------------------------
-function peopleMd(people) {
+export function peopleMd(people, { title } = {}) {
   const ok = people.filter((p) => !p.error);
-  const out = [`# Luma rolodex — ${ok.length} people`, `generated ${new Date().toISOString()}`, ``];
+  const heading = title ? `# ${title} — ${ok.length} people` : `# Luma rolodex — ${ok.length} people`;
+  const out = [heading, `generated ${new Date().toISOString()}`, ``];
   for (const p of ok) {
     out.push(`## ${p.name || p.username || "(unknown)"}${p.verified ? " ✓" : ""}`);
     if (p.username) out.push(`- username: ${p.username}`);
@@ -42,9 +26,8 @@ function peopleMd(people) {
     if (p.bio) out.push(`- bio: ${p.bio.replace(/\n+/g, " ")}`);
     out.push(`- events attended: ${p.attendedCount ?? "?"}`);
     out.push(`- events hosted: ${p.hostedCount ?? "?"}`);
-    if (p.hostedEvents?.length) {
-      out.push(`- hosted events:`);
-      for (const ev of p.hostedEvents) out.push(`  - [${ev.name}](${ev.url})`);
+    if (p.seenAt?.length) {
+      out.push(`- met before at: ${p.seenAt.map((e) => `[${e.name}](${e.url})`).join(", ")}`);
     }
     out.push("");
   }
@@ -57,54 +40,50 @@ function peopleMd(people) {
   return out.join("\n");
 }
 
-function eventsMd(people) {
-  const events = collectEvents(people);
-  const withDesc = events.filter((e) => e.description);
-  const out = [
-    `# Hosted events — ${events.length} events`,
-    `generated ${new Date().toISOString()} · ${withDesc.length} with descriptions`,
-    ``,
-  ];
-  for (const ev of events) {
-    out.push(`## ${ev.name}`);
-    out.push(`- url: ${ev.url}`);
-    if (ev.startAt) out.push(`- date: ${shortDate(ev.startAt)}`);
-    if (ev.city) out.push(`- city: ${ev.city}`);
-    out.push(`- host(s): ${ev.hosts.join(", ")}`);
-    out.push("");
-    if (ev.description) { out.push(ev.description, ""); }
-    out.push(`---`, "");
-  }
-  return out.join("\n");
-}
-
-// --- json ------------------------------------------------------------------
-function peopleJson(people) {
+export function peopleJson(people) {
   return people.map((p) => p.error ? p : {
     name: p.name, username: p.username, profileUrl: p.profileUrl,
     socials: p.socials,
     bio: p.bio,
     attendedCount: p.attendedCount, hostedCount: p.hostedCount,
-    hostedEvents: (p.hostedEvents || []).map((ev) => ({ name: ev.name, url: ev.url })),
+    seenAt: p.seenAt || [],
   });
 }
 
-function eventsJson(people) {
-  return collectEvents(people).map((ev) => ({
-    name: ev.name, url: ev.url, apiId: ev.apiId,
-    date: ev.startAt, city: ev.city, hosts: ev.hosts,
-    description: ev.description ?? null,
-  }));
+export async function writeRolodex(people, { outDir = "out", title } = {}) {
+  await mkdir(outDir, { recursive: true });
+  await writeFile(path.join(outDir, "people.md"), peopleMd(people, { title }));
+  return { peopleFile: "people.md" };
 }
 
-export async function writeRolodex(people, { outDir = "out", json = false } = {}) {
-  await mkdir(outDir, { recursive: true });
-  if (json) {
-    await writeFile(path.join(outDir, "people.json"), JSON.stringify(peopleJson(people), null, 2));
-    await writeFile(path.join(outDir, "events.json"), JSON.stringify(eventsJson(people), null, 2));
-    return { peopleFile: "people.json", eventsFile: "events.json" };
-  }
-  await writeFile(path.join(outDir, "people.md"), peopleMd(people));
-  await writeFile(path.join(outDir, "events.md"), eventsMd(people));
-  return { peopleFile: "people.md", eventsFile: "events.md" };
-}
+// ===========================================================================
+// PARKED — per-event descriptions renderer (out/events.md) for the hosted-
+// events feature. Revive alongside the rolodex/luma changes if reintroduced.
+// ---------------------------------------------------------------------------
+//
+// const shortDate = (iso) => (iso ? iso.slice(0, 10) : "");
+//
+// function collectEvents(people) {
+//   const byId = new Map();
+//   for (const p of people) for (const ev of p.hostedEvents || []) {
+//     if (!byId.has(ev.apiId)) byId.set(ev.apiId, { ...ev, hosts: [] });
+//     const host = p.name || p.username || p.profileUrl;
+//     const rec = byId.get(ev.apiId);
+//     if (!rec.hosts.includes(host)) rec.hosts.push(host);
+//   }
+//   return [...byId.values()];
+// }
+//
+// function eventsMd(people) {
+//   const events = collectEvents(people);
+//   const out = [`# Hosted events — ${events.length} events`, ``];
+//   for (const ev of events) {
+//     out.push(`## ${ev.name}`, `- url: ${ev.url}`);
+//     if (ev.startAt) out.push(`- date: ${shortDate(ev.startAt)}`);
+//     if (ev.city) out.push(`- city: ${ev.city}`);
+//     out.push(`- host(s): ${ev.hosts.join(", ")}`, "");
+//     if (ev.description) out.push(ev.description, "");
+//     out.push(`---`, "");
+//   }
+//   return out.join("\n");
+// }

@@ -1,38 +1,39 @@
 #!/usr/bin/env node
 /**
- * luma-intel · build the rolodex
+ * luma-intel · build the people rolodex from the command line
  *
- * Input : luma-guests.json (from index.html), a raw guest-list .html file,
- *         or a .txt/.csv of /user/ URLs.
+ * Input : luma-guests.json (a JSON list of guests), a raw guest-list .html
+ *         file, or a .txt/.csv of /user/ URLs.
  *
  * For each person it captures: name, Luma username/URL, LinkedIn + Instagram +
- * X + website + YouTube (whatever they listed), Luma bio, events-attended count,
- * events-hosted count, and the list of events they've hosted (title + lu.ma URL).
- * It also fetches each hosted event's description.
+ * X + website + YouTube (whatever they listed), Luma bio, and the
+ * events-attended / events-hosted counts.
  *
- * Output (exactly two files):
- *   out/people.md  — the people, with their hosted events as title + link
- *   out/events.md  — every hosted event's description, in one place
- * (use --json for people.json / events.json instead)
+ * Output:
+ *   out/people.md   (or people.json with --json)
  *
  * Usage:
  *   node enrich.mjs luma-guests.json
  *   node enrich.mjs guest-list.html
- *   node enrich.mjs luma-guests.json --json
+ *   node enrich.mjs urls.txt --json
  *
  * Flags:
- *   --json              emit people.json / events.json instead of markdown
- *   --no-descriptions   list hosted events but skip fetching their descriptions
- *   --no-events         skip hosted events entirely (profiles only)
+ *   --json              emit people.json instead of markdown
  *   --delay <ms>        min gap between requests (default 1000)
  *   --concurrency <n>   parallel requests (default 2)
  *   --max <n>           cap number of people processed
+ *
+ * (The "events a person has hosted" feature is currently parked — see the
+ *  commented blocks in src/luma.mjs and src/rolodex.mjs.)
  */
+
+import { writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 import { configure } from "./src/net.mjs";
 import { loadProfileUrls } from "./src/input.mjs";
 import { buildRolodex } from "./src/rolodex.mjs";
-import { writeRolodex } from "./src/render.mjs";
+import { writeRolodex, peopleJson } from "./src/render.mjs";
 
 const args = process.argv.slice(2);
 const inputPath = args.find((a) => !a.startsWith("--"));
@@ -41,7 +42,7 @@ const opt = (f, def) => { const i = args.indexOf("--" + f); return i >= 0 ? args
 
 async function main() {
   if (!inputPath) {
-    console.error("usage: node enrich.mjs <luma-guests.json | guest-list.html | urls.txt> [--json] [--no-events] [--no-descriptions] [--delay ms] [--concurrency n] [--max n]");
+    console.error("usage: node enrich.mjs <luma-guests.json | guest-list.html | urls.txt> [--json] [--delay ms] [--concurrency n] [--max n]");
     process.exit(1);
   }
 
@@ -52,22 +53,22 @@ async function main() {
   const max = Number(opt("max", 0));
   if (max > 0) urls = urls.slice(0, max);
 
-  const includeEvents = !has("no-events");
-  const includeDescriptions = includeEvents && !has("no-descriptions");
-
-  console.error(`Building rolodex for ${urls.length} people${includeEvents ? " (+ hosted events" + (includeDescriptions ? " + descriptions" : "") + ")" : ""}…`);
+  console.error(`Building rolodex for ${urls.length} people…`);
   const people = await buildRolodex(urls, {
-    includeEvents,
-    includeDescriptions,
     onProgress: (p, i, n) => {
-      const ev = p.hostedEvents?.length ? ` · ${p.hostedEvents.length} hosted` : "";
-      console.error(`  [${i + 1}/${n}] ${p.error ? "ERR " + p.error : `${p.name || p.profileUrl}${ev}`}`);
+      console.error(`  [${i + 1}/${n}] ${p.error ? "ERR " + p.error : (p.name || p.profileUrl)}`);
     },
   });
 
-  const { peopleFile, eventsFile } = await writeRolodex(people, { json: has("json") });
   const ok = people.filter((p) => !p.error).length;
-  console.error(`\nWrote out/${peopleFile} and out/${eventsFile} — ${ok}/${people.length} people resolved.`);
+  if (has("json")) {
+    await mkdir("out", { recursive: true });
+    await writeFile(path.join("out", "people.json"), JSON.stringify(peopleJson(people), null, 2));
+    console.error(`\nWrote out/people.json — ${ok}/${people.length} people resolved.`);
+  } else {
+    const { peopleFile } = await writeRolodex(people);
+    console.error(`\nWrote out/${peopleFile} — ${ok}/${people.length} people resolved.`);
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
