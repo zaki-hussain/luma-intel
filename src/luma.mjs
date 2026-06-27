@@ -99,13 +99,13 @@ function hostToGuest(h) {
   return { profileUrl: `${WEB_BASE}/user/${handle}`, name, username: h.username || null };
 }
 
-export async function fetchEventMeta(eventUrl) {
+// Pure: parse an event page's HTML into metadata (no network).
+export function parseEventMeta(html, eventUrl) {
   const slug = eventSlug(eventUrl);
   const canonical = slug ? `${EVENT_BASE}/${slug}` : eventUrl;
   let name = null, apiId = null, startAt = null, city = null, hosts = [];
   try {
-    const { body } = await getText(canonical);
-    const m = body.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    const m = (html || "").match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (m) {
       const init = JSON.parse(m[1])?.props?.pageProps?.initialData;
       const root = init?.data || init || {};   // Luma wraps it as { kind, data } on some pages
@@ -118,6 +118,14 @@ export async function fetchEventMeta(eventUrl) {
     }
   } catch { /* fall back to slug */ }
   return { url: canonical, slug, name: name || slug || canonical, apiId, startAt, city, hosts };
+}
+
+export async function fetchEventMeta(eventUrl) {
+  const slug = eventSlug(eventUrl);
+  const canonical = slug ? `${EVENT_BASE}/${slug}` : eventUrl;
+  let html = "";
+  try { html = (await getText(canonical)).body; } catch { /* fall back to slug */ }
+  return parseEventMeta(html, canonical);
 }
 
 export { WEB_BASE, API_BASE, EVENT_BASE };
