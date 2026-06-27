@@ -102,6 +102,7 @@
 
   <h2>Your events</h2>
   <div class="toolbar">
+    <button id="fetchHosts">Fetch hosts (all events)</button>
     <button id="export">Export data</button>
     <button id="import">Import data</button>
     <input type="file" id="importFile" accept="application/json,.json" hidden />
@@ -244,6 +245,7 @@ async function loadEvents() {
         <div class="evname"><a href="${escapeAttr(ev.url)}" target="_blank" rel="noopener">${escapeHtml(ev.name)}</a></div>
         <div class="evmeta">${ev.guestCount} guests${ev.city ? " · " + escapeHtml(ev.city) : ""}${ev.startAt ? " · " + escapeHtml(ev.startAt.slice(0,10)) : ""}</div>
       </div>
+      <button class="tiny" data-act="hosts">Add hosts</button>
       <button class="tiny" data-act="check">Check</button>
       <button class="tiny" data-act="delete">Delete</button>
     </li>`).join("");
@@ -257,8 +259,17 @@ evlist.addEventListener("click", async (e) => {
     loadEvents();
   } else if (btn.dataset.act === "check") {
     analyze({ eventId: id });
+  } else if (btn.dataset.act === "hosts") {
+    fetchHosts({ eventId: id });
   }
 });
+
+function fetchHosts(payload) {
+  startJob("/api/events/hosts", payload, (result) => {
+    setStatus(`Added ${result.hostsAdded} host${result.hostsAdded === 1 ? "" : "s"} across ${result.events} event${result.events === 1 ? "" : "s"} (${result.fetched} fetched, ${result.hits} cached).`);
+    loadEvents();
+  });
+}
 
 // --- actions -----------------------------------------------------------------
 function setStatus(msg, isErr = false) { statusEl.textContent = msg || ""; statusEl.classList.toggle("err", !!isErr); }
@@ -294,7 +305,8 @@ async function poll(jobId, onDone) {
   const pr = res.progress || {};
   if (res.status === "running") {
     setBar(pr.done || 0, pr.total || 1);
-    setStatus(`Reading profiles — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
+    const label = pr.phase === "hosts" ? "Fetching hosts" : "Reading profiles";
+    setStatus(`${label} — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
     return void setTimeout(() => poll(jobId, onDone), 600);
   }
   if (res.status === "error") { setBar(0, 0); setStatus(res.error || "job failed", true); return; }
@@ -343,6 +355,7 @@ zone.addEventListener("paste", (e) => {
 $("save").addEventListener("click", save);
 $("check").addEventListener("click", checkCurrent);
 $("showPeople").addEventListener("click", showPeople);
+$("fetchHosts").addEventListener("click", () => fetchHosts({}));
 $("clear").addEventListener("click", () => {
   state.guests = []; zone.innerHTML = ""; eventUrl.value = ""; stat.textContent = "";
   setStatus(""); setBar(0, 0);

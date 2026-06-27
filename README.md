@@ -13,7 +13,8 @@ you're considering to see which guests you've already crossed paths with.
   hit *Save attended event*. The event's hosts (read from the public event page)
   are folded in as attendees too. Each guest's profile (LinkedIn / socials / bio)
   is resolved right then and cached. Events are listed newest-first and stored in
-  `data/events.json`.
+  `data/events.json`. For events you saved earlier, *Add hosts* (per event) or
+  *Fetch hosts (all events)* backfills the hosts retroactively.
 - **Check an event.** Paste a new event's URL + guest list (or click *Check* on a
   saved one). The people you've already been to an event with are flagged, with
   links to *which* of your events you met them at. Profiles seen before are

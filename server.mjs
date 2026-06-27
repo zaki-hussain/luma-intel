@@ -206,6 +206,33 @@ const server = http.createServer(async (req, res) => {
       return send(res, 202, { jobId: id });
     }
 
+    // backfill hosts for events saved before hosts were captured
+    // body: { eventId } for one event, or {} for all of them
+    if (req.method === "POST" && pathname === "/api/events/hosts") {
+      const body = await readJson(req);
+      const store = await loadStore();
+      const targets = body?.eventId ? store.events.filter((e) => e.id === body.eventId) : store.events;
+      if (!targets.length) return send(res, 404, { error: "no matching events" });
+
+      const { id, job } = newJob(targets.length);
+      run(job, async (job) => {
+        const newUrls = new Set();
+        let hostsAdded = 0;
+        for (let i = 0; i < targets.length; i++) {
+          const ev = targets[i];
+          job.progress = { phase: "hosts", done: i, total: targets.length, message: `hosts for ${ev.name}` };
+          const meta = await fetchEventMeta(ev.url);
+          const had = new Set(ev.guests.map((g) => g.profileUrl));
+          ev.guests = normGuests([...ev.guests, ...meta.hosts]);
+          for (const g of ev.guests) if (!had.has(g.profileUrl)) { newUrls.add(g.profileUrl); hostsAdded++; }
+        }
+        const { hits, fetched } = await enrichGuests([...newUrls], store, job);
+        await saveStore(store);
+        return { events: targets.length, hostsAdded, hits, fetched };
+      });
+      return send(res, 202, { jobId: id });
+    }
+
     // delete a saved event
     const del = pathname.match(/^\/api\/events\/(.+)$/);
     if (req.method === "DELETE" && del) {
