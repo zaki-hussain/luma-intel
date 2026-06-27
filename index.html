@@ -79,6 +79,12 @@
   .empty { color: var(--muted); padding: 12px 2px; }
   .files { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .files code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+  .conn { margin-top: 12px; font-size: 12px; }
+  .conn summary { cursor: pointer; color: var(--muted); }
+  .conn .connbody { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .conn input { width: 240px; padding: 6px 9px; border-radius: 7px; background: #0b0e14; color: var(--text); border: 1px solid var(--border); font-size: 12px; }
+  .conn .connhint { color: var(--muted); flex: 1; min-width: 220px; }
+  .conn code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; }
 </style>
 </head>
 <body>
@@ -99,6 +105,15 @@
   </div>
   <div class="bar" id="bar"><i></i></div>
   <div class="status" id="status"></div>
+
+  <details id="conn" class="conn">
+    <summary>Local server</summary>
+    <div class="connbody">
+      <input type="text" id="apiBase" placeholder="http://localhost:5178" autocomplete="off" spellcheck="false" />
+      <button id="saveApi" class="tiny">Save</button>
+      <span class="connhint">Leave blank when this page is served by the server itself. Set it (e.g. <code>http://localhost:5178</code>) when the page is hosted elsewhere, like your own domain.</span>
+    </div>
+  </details>
 
   <h2>Your events</h2>
   <div class="toolbar">
@@ -129,6 +144,21 @@
 <script>
 const LUMA_BASE = "https://luma.com";
 const state = { guests: [], result: null };
+
+// Where the local Node server lives. When this page is served by that server
+// (localhost) we just use same-origin. When it's served from somewhere else
+// (e.g. your Netlify domain), we call the server on localhost. Override with
+// ?api=http://localhost:PORT or via the "Local server" box below.
+const DEFAULT_LOCAL = "http://localhost:5178";
+function defaultApiBase() {
+  const fromQuery = new URLSearchParams(location.search).get("api");
+  if (fromQuery) return fromQuery;
+  const saved = localStorage.getItem("luma-api-base");
+  if (saved !== null) return saved;
+  return /^(localhost|127\.0\.0\.1|\[::1\]|)$/.test(location.hostname) ? "" : DEFAULT_LOCAL;
+}
+let apiBase = defaultApiBase().replace(/\/$/, "");
+const api = (path) => apiBase + path;
 
 const $ = (id) => document.getElementById(id);
 const zone = $("zone"), eventUrl = $("eventUrl"), stat = $("stat");
@@ -224,7 +254,7 @@ function rankedRow(p) {
 async function showPeople() {
   $("showPeople").disabled = true;
   try {
-    const people = (await (await fetch("/api/people")).json()).people || [];
+    const people = (await (await fetch(api("/api/people"))).json()).people || [];
     $("peopleStat").textContent = people.length ? `${people.length} people · most frequent first` : "";
     $("people").innerHTML = people.length
       ? people.map(rankedRow).join("")
@@ -236,7 +266,7 @@ async function showPeople() {
 // --- saved events ------------------------------------------------------------
 async function loadEvents() {
   let events = [];
-  try { events = (await (await fetch("/api/events")).json()).events || []; } catch {}
+  try { events = (await (await fetch(api("/api/events"))).json()).events || []; } catch {}
   if ($("people").children.length) showPeople(); // keep the ranked list fresh
   if (!events.length) { evlist.innerHTML = '<li class="empty">No saved events yet.</li>'; return; }
   evlist.innerHTML = events.map(ev => `
@@ -255,7 +285,7 @@ evlist.addEventListener("click", async (e) => {
   const btn = e.target.closest("button"); if (!btn) return;
   const id = btn.closest(".evrow").dataset.id;
   if (btn.dataset.act === "delete") {
-    await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await fetch(api(`/api/events/${encodeURIComponent(id)}`), { method: "DELETE" });
     loadEvents();
   } else if (btn.dataset.act === "check") {
     analyze({ eventId: id });
@@ -284,7 +314,7 @@ async function startJob(endpoint, payload, onDone) {
   setBar(0, 1);
   let jobId;
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetch(api(endpoint), {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
     });
     const data = await readBody(res);
@@ -301,7 +331,7 @@ async function startJob(endpoint, payload, onDone) {
 
 async function poll(jobId, onDone) {
   let res;
-  try { res = await (await fetch(`/api/job/${jobId}`)).json(); }
+  try { res = await (await fetch(api(`/api/job/${jobId}`))).json(); }
   catch (e) { setStatus(`Lost contact with the server (${e.message}).`, true); return; }
   const pr = res.progress || {};
   if (res.status === "running") {
@@ -378,7 +408,7 @@ $("downloadMd").addEventListener("click", () => {
 
 $("export").addEventListener("click", async () => {
   try {
-    const text = await (await fetch("/api/export")).text();
+    const text = await (await fetch(api("/api/export"))).text();
     const blob = new Blob([text], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "luma-intel-backup.json"; a.click(); URL.revokeObjectURL(a.href);
@@ -403,7 +433,7 @@ $("importFile").addEventListener("change", async (e) => {
     catch { throw new Error("that file isn't valid JSON — pick a luma-intel backup file"); }
     if (!backup || !Array.isArray(backup.events)) throw new Error("that doesn't look like a luma-intel backup (no \"events\" list)");
 
-    const res = await fetch("/api/import", {
+    const res = await fetch(api("/api/import"), {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(backup),
     });
     const data = await readBody(res);
@@ -417,12 +447,24 @@ $("importFile").addEventListener("change", async (e) => {
   finally { e.target.value = ""; }
 });
 
+// --- local server config -----------------------------------------------------
+$("apiBase").value = apiBase;
+if (apiBase) $("conn").open = true; // remotely-hosted page: surface the setting
+$("saveApi").addEventListener("click", () => {
+  apiBase = $("apiBase").value.trim().replace(/\/$/, "");
+  localStorage.setItem("luma-api-base", apiBase);
+  setStatus(apiBase ? `Talking to ${apiBase}.` : "Talking to this same origin.");
+  init();
+});
+
 async function init() {
   try {
-    const data = await readBody(await fetch("/api/events"));
+    const data = await readBody(await fetch(api("/api/events")));
     if (!data || data._raw !== undefined || !Array.isArray(data.events)) throw new Error("no API");
   } catch {
-    setStatus('Backend not reachable. Run "npm start" and open the printed http://localhost URL — a static-only host (or opening the file directly) can\'t fetch Luma profiles.', true);
+    const where = apiBase || "this site";
+    setStatus(`Backend not reachable at ${where}. Run "npm start" locally and set the Local server box to its URL (e.g. http://localhost:5178).`, true);
+    $("conn").open = true;
   }
   loadEvents();
 }

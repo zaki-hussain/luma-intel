@@ -1,0 +1,15 @@
+# Netlify hosts ONLY the page. The Node server (server.mjs) runs on your own
+# machine (`npm start`); the hosted page calls it on localhost (see the
+# "Local server" box on the page). The server sends CORS headers so the
+# cross-origin call from your domain is allowed.
+#
+# Netlify build settings (UI equivalents):
+#   Base directory:      (leave blank)
+#   Package directory:   (leave blank)
+#   Build command:       npm run build:site   (configured below)
+#   Publish directory:   dist
+#   Functions directory: (leave blank — no serverless functions)
+
+[build]
+  command = "npm run build:site"
+  publish = "dist"

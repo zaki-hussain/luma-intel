@@ -32,6 +32,29 @@ Pasting reads the `text/html` on your clipboard, so the Luma profile links
 survive (a normal paste throws them away).
 
 ---
+## Hosting the page on your own domain (backend stays local)
+
+The server fetches Luma server-side (the browser can't, due to CORS), so it must
+run somewhere — but that "somewhere" can just be your own machine. You can host
+the **page** on a static host like Netlify and still have it talk to the server
+running locally:
+
+1. Deploy the repo to Netlify. The included `netlify.toml` builds and publishes
+   only `index.html` (Publish directory `dist`, build `npm run build:site`).
+2. Run the backend locally with `npm start`.
+3. On the hosted page, open **Local server** and set it to your server's URL
+   (default `http://localhost:5178`), or load the page with
+   `?api=http://localhost:5178`.
+
+The server sends permissive CORS headers, and browsers allow an HTTPS page to
+call `http://localhost`, so this works without certificates. Everything (events,
+profiles, cache) stays on your machine; only the static page is hosted.
+
+> This only works on the machine running the server — visitors without it won't
+> have a backend. For a shareable multi-user deployment you'd run `server.mjs` on
+> a Node host (Render/Railway/Fly) instead.
+
+---
 ## CLI
 
 The profile enrichment also runs from the command line:

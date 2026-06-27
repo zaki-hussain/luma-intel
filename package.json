@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "enrich": "node enrich.mjs"
+    "enrich": "node enrich.mjs",
+    "build:site": "rm -rf dist && mkdir -p dist && cp index.html dist/index.html"
   },
   "license": "MIT"
 }

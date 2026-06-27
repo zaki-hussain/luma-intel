@@ -111,9 +111,17 @@ function cleanPerson(p) {
 }
 
 // --- http helpers ------------------------------------------------------------
+// Allow the page to be served from anywhere (e.g. your Netlify domain) while it
+// talks to this server on localhost. No credentials are used, so "*" is fine.
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+};
 function send(res, code, body, type = "application/json", headers = {}) {
   const payload = type === "application/json" ? JSON.stringify(body) : body;
-  res.writeHead(code, { "content-type": type, "cache-control": "no-store", ...headers });
+  res.writeHead(code, { "content-type": type, "cache-control": "no-store", ...CORS, ...headers });
   res.end(payload);
 }
 async function readJson(req) {
@@ -161,6 +169,9 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const { pathname } = url;
+
+    // CORS preflight for cross-origin (e.g. Netlify-hosted) pages
+    if (req.method === "OPTIONS") { res.writeHead(204, CORS); return res.end(); }
 
     if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
       const html = await readFile(path.join(ROOT, "index.html"), "utf8");
@@ -308,7 +319,7 @@ const server = http.createServer(async (req, res) => {
     // export everything (events + cached profiles) as a downloadable backup
     if (req.method === "GET" && pathname === "/api/export") {
       const store = await loadStore();
-      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store",
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", ...CORS,
                            "content-disposition": 'attachment; filename="luma-intel-backup.json"' });
       return res.end(JSON.stringify(store, null, 2));
     }
