@@ -287,12 +287,13 @@ async function startJob(endpoint, payload, onDone) {
     const res = await fetch(endpoint, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.status);
+    const data = await readBody(res);
+    if (!data || data._raw !== undefined) throw new Error("no JSON response — is the server running?");
+    if (!res.ok) throw new Error(data.error || `server error ${res.status}`);
     jobId = data.jobId;
   } catch (e) {
     setBar(0, 0);
-    setStatus(`Couldn't reach the server (${e.message}). Is it running ("npm start")?`, true);
+    setStatus(`Couldn't reach the server (${e.message}). Run "npm start" and open the printed http://localhost URL.`, true);
     return;
   }
   poll(jobId, onDone);
@@ -384,22 +385,48 @@ $("export").addEventListener("click", async () => {
     setStatus("Exported your events and cached profiles.");
   } catch (e) { setStatus(`Export failed (${e.message}).`, true); }
 });
+// read a response body defensively (handles empty / non-JSON responses)
+async function readBody(res) {
+  const text = await res.text();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return { _raw: text }; }
+}
+
 $("import").addEventListener("click", () => $("importFile").click());
 $("importFile").addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   try {
-    const body = await file.text();
-    const res = await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.status);
+    const text = await file.text();
+    let backup;
+    try { backup = JSON.parse(text); }
+    catch { throw new Error("that file isn't valid JSON — pick a luma-intel backup file"); }
+    if (!backup || !Array.isArray(backup.events)) throw new Error("that doesn't look like a luma-intel backup (no \"events\" list)");
+
+    const res = await fetch("/api/import", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(backup),
+    });
+    const data = await readBody(res);
+    if (!data || data._raw !== undefined) {
+      throw new Error('no JSON from the server — open this page through the server (run "npm start" and visit the printed http://localhost URL), not by double-clicking the file');
+    }
+    if (!res.ok) throw new Error(data.error || `server error ${res.status}`);
     setStatus(`Imported ${data.events} events and ${data.people} cached profiles.`);
     loadEvents();
-  } catch (err) { setStatus(`Import failed (${err.message}).`, true); }
+  } catch (err) { setStatus(`Import failed: ${err.message}`, true); }
   finally { e.target.value = ""; }
 });
 
-loadEvents();
+async function init() {
+  try {
+    const data = await readBody(await fetch("/api/events"));
+    if (!data || data._raw !== undefined || !Array.isArray(data.events)) throw new Error("no API");
+  } catch {
+    setStatus('Backend not reachable. Run "npm start" and open the printed http://localhost URL — a static-only host (or opening the file directly) can\'t fetch Luma profiles.', true);
+  }
+  loadEvents();
+}
+init();
 </script>
 </body>
 </html>
