@@ -77,8 +77,7 @@
   .soc { display: inline-flex; gap: 8px; flex-wrap: wrap; }
   .soc a { font-size: 12px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; }
   .empty { color: var(--muted); padding: 12px 2px; }
-  .files { color: var(--muted); font-size: 12px; margin-top: 14px; }
-  .files code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -123,18 +122,57 @@
     <span class="stat" id="resultStat"></span>
   </div>
   <div id="results"></div>
-  <div class="files" id="files"></div>
+  <div class="note" id="note"></div>
 </main>
 
 <script>
 const LUMA_BASE = "https://luma.com";
 const state = { guests: [], result: null };
 
+// The page calls one stateless endpoint (/api/luma) to fetch Luma pages — the
+// only thing that can't run in the browser (CORS). Everything else lives here.
+// Same-origin by default; override with ?api=http://localhost:5178 to point the
+// hosted page at a server running on your own machine.
+const apiBase = (new URLSearchParams(location.search).get("api") || "").replace(/\/$/, "");
+const api = (path) => apiBase + path;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 const $ = (id) => document.getElementById(id);
 const zone = $("zone"), eventUrl = $("eventUrl"), stat = $("stat");
 const statusEl = $("status"), bar = $("bar"), barFill = bar.querySelector("i");
-const evlist = $("evlist"), results = $("results"), filesEl = $("files");
+const evlist = $("evlist"), results = $("results"), noteEl = $("note");
 const resultsHead = $("resultsHead"), resultTools = $("resultTools"), resultStat = $("resultStat");
+
+// --- local store (everything lives in the browser) --------------------------
+const STORE_KEY = "luma-intel-store";
+function loadStore() {
+  try { const s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); s.events ||= []; s.people ||= {}; return s; }
+  catch { return { events: [], people: {} }; }
+}
+function saveStore(s) { localStorage.setItem(STORE_KEY, JSON.stringify(s)); }
+
+// --- identity helpers -------------------------------------------------------
+function resolveUserUrl(s) {
+  if (!s) return null;
+  try {
+    if (/^https?:\/\//i.test(s)) {
+      const u = new URL(s);
+      if (/^\/user\//.test(u.pathname)) return LUMA_BASE + u.pathname.replace(/\/$/, "");
+      return null;
+    }
+  } catch { return null; }
+  if (s.startsWith("/user/")) return LUMA_BASE + s.replace(/\/$/, "");
+  return null;
+}
+function normGuests(list) {
+  const byUrl = new Map();
+  for (const g of list || []) {
+    const url = resolveUserUrl(typeof g === "string" ? g : (g && (g.profileUrl || g.href || g.url)));
+    if (!url || byUrl.has(url)) continue;
+    byUrl.set(url, { profileUrl: url, name: (g && g.name) || null, username: url.replace("https://luma.com/user/", "") });
+  }
+  return [...byUrl.values()];
+}
 
 // --- clipboard parsing (keeps the /user/ profile links) ---------------------
 function profilePath(href) {
@@ -144,9 +182,7 @@ function profilePath(href) {
   } catch {}
   return null;
 }
-function cleanName(s) {
-  return (s || "").replace(/^Profile picture for\s*/i, "").replace(/\s+/g, " ").trim();
-}
+function cleanName(s) { return (s || "").replace(/^Profile picture for\s*/i, "").replace(/\s+/g, " ").trim(); }
 function parseHtml(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const guests = [], seen = new Set();
@@ -166,19 +202,74 @@ function parseHtml(html) {
   return guests;
 }
 
-// --- rendering ---------------------------------------------------------------
+// --- network (only Luma fetches go through the server) ----------------------
+async function luma(op, url) {
+  const res = await fetch(api(`/api/luma?op=${op}&url=${encodeURIComponent(url)}`));
+  const text = await res.text();
+  if (!text) throw new Error("no response from the fetch service");
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error("the fetch service isn't responding with JSON — is it deployed? (Netlify function /api/luma)"); }
+  if (!res.ok) throw new Error(data.error || `error ${res.status}`);
+  return data;
+}
+const fetchProfile = (url) => luma("profile", url);
+const fetchEventMeta = (url) => luma("event", url);
+
+// Resolve profiles, reusing the browser cache; newly fetched profiles are saved.
+async function enrichGuests(urls, onProgress) {
+  const store = loadStore();
+  const people = []; let hits = 0, fetched = 0, done = 0;
+  for (const url of urls) {
+    let person = store.people[url];
+    if (person) { hits++; }
+    else {
+      try { person = await fetchProfile(url); } catch (e) { person = { profileUrl: url, error: e.message }; }
+      if (!person.error) store.people[url] = person;
+      fetched++;
+      await sleep(350); // be polite to Luma
+    }
+    people.push(person);
+    onProgress && onProgress(++done, urls.length, person);
+  }
+  saveStore(store);
+  return { people, hits, fetched };
+}
+
+// --- markdown ---------------------------------------------------------------
 const SOCIAL_LABEL = { twitter: "x" };
 const SOCIAL_KEYS = ["linkedin", "instagram", "twitter", "website", "youtube", "tiktok", "github"];
+function peopleMarkdown(people, title) {
+  const ok = people.filter((p) => !p.error);
+  const out = [`# ${title || "Luma rolodex"} — ${ok.length} people`, `generated ${new Date().toISOString()}`, ""];
+  for (const p of ok) {
+    out.push(`## ${p.name || p.username || "(unknown)"}${p.verified ? " ✓" : ""}`);
+    if (p.username) out.push(`- username: ${p.username}`);
+    out.push(`- profile: ${p.profileUrl}`);
+    for (const k of SOCIAL_KEYS) if (p.socials && p.socials[k]) out.push(`- ${SOCIAL_LABEL[k] || k}: ${p.socials[k]}`);
+    if (p.bio) out.push(`- bio: ${p.bio.replace(/\n+/g, " ")}`);
+    out.push(`- events attended: ${p.attendedCount ?? "?"}`);
+    out.push(`- events hosted: ${p.hostedCount ?? "?"}`);
+    if (p.seenAt && p.seenAt.length) out.push(`- met before at: ${p.seenAt.map((e) => `[${e.name}](${e.url})`).join(", ")}`);
+    out.push("");
+  }
+  const errs = people.filter((p) => p.error);
+  if (errs.length) {
+    out.push("---", "", `## Could not fetch (${errs.length})`);
+    for (const e of errs) out.push(`- ${e.profileUrl} — ${e.error}`);
+    out.push("");
+  }
+  return out.join("\n");
+}
 
+// --- rendering --------------------------------------------------------------
 function escapeHtml(s = "") { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 function escapeAttr(s = "") { return String(s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
-
 function socialsHtml(socials = {}) {
   const items = SOCIAL_KEYS.filter((k) => socials[k])
     .map((k) => `<a href="${escapeAttr(socials[k])}" target="_blank" rel="noopener">${SOCIAL_LABEL[k] || k}</a>`);
   return items.length ? `<span class="soc">${items.join("")}</span>` : '<span class="empty">—</span>';
 }
-
 function personHtml(p) {
   if (p.error) {
     return `<div class="person"><h3>${escapeHtml(p.profileUrl)}</h3><div class="meta">could not fetch — ${escapeHtml(p.error)}</div></div>`;
@@ -196,7 +287,6 @@ function personHtml(p) {
     ${seen}
   </div>`;
 }
-
 function renderResult(result) {
   state.result = result;
   const people = [...result.people].sort((a, b) => (b.seenAt?.length || 0) - (a.seenAt?.length || 0));
@@ -205,10 +295,24 @@ function renderResult(result) {
   const title = result.event?.name ? `${result.event.name} — ` : "";
   resultStat.textContent = `${title}${result.stats.known} familiar · ${result.stats.resolved}/${result.stats.total} profiles`;
   results.innerHTML = people.length ? people.map(personHtml).join("") : '<div class="empty">No one resolved.</div>';
-  filesEl.innerHTML = result.files ? `Also saved for manual access: <code>${escapeHtml(result.files.people)}</code>.` : "";
+  noteEl.textContent = "Saved in your browser. Use Export to back it up or move it to another device.";
 }
 
-// --- people you've met (ranked) ---------------------------------------------
+// --- people you've met (ranked client-side) ---------------------------------
+function rankPeople(store) {
+  const byUrl = new Map();
+  for (const ev of store.events) for (const g of ev.guests) {
+    if (!byUrl.has(g.profileUrl)) byUrl.set(g.profileUrl, { ...g, events: [] });
+    byUrl.get(g.profileUrl).events.push({ id: ev.id, name: ev.name, url: ev.url });
+  }
+  const people = [...byUrl.values()].map((p) => {
+    const c = store.people[p.profileUrl] || {};
+    return { profileUrl: p.profileUrl, name: c.name || p.name || p.username, username: c.username || p.username,
+             socials: c.socials || {}, bio: c.bio || null, count: p.events.length, events: p.events };
+  });
+  people.sort((a, b) => b.count - a.count || (a.name || "").localeCompare(b.name || ""));
+  return people;
+}
 function rankedRow(p) {
   const badgeClass = p.count > 1 ? "known" : "count";
   const events = (p.events || []).map(e => `<a href="${escapeAttr(e.url)}" target="_blank" rel="noopener">${escapeHtml(e.name)}</a>`).join(", ");
@@ -220,43 +324,37 @@ function rankedRow(p) {
     <div class="meta"><span class="lbl">events</span>${events}</div>
   </div>`;
 }
-
-async function showPeople() {
-  $("showPeople").disabled = true;
-  try {
-    const people = (await (await fetch("/api/people")).json()).people || [];
-    $("peopleStat").textContent = people.length ? `${people.length} people · most frequent first` : "";
-    $("people").innerHTML = people.length
-      ? people.map(rankedRow).join("")
-      : '<div class="empty">No people yet — save some events first.</div>';
-  } catch (e) { setStatus(`Couldn't load people (${e.message}).`, true); }
-  finally { $("showPeople").disabled = false; }
+function showPeople() {
+  const people = rankPeople(loadStore());
+  $("peopleStat").textContent = people.length ? `${people.length} people · most frequent first` : "";
+  $("people").innerHTML = people.length ? people.map(rankedRow).join("") : '<div class="empty">No people yet — save some events first.</div>';
 }
 
-// --- saved events ------------------------------------------------------------
-async function loadEvents() {
-  let events = [];
-  try { events = (await (await fetch("/api/events")).json()).events || []; } catch {}
-  if ($("people").children.length) showPeople(); // keep the ranked list fresh
+// --- saved events -----------------------------------------------------------
+function eventsSorted(store) {
+  return [...store.events].sort((a, b) => (b.startAt || b.addedAt || "").localeCompare(a.startAt || a.addedAt || ""));
+}
+function loadEvents() {
+  const store = loadStore();
+  if ($("people").children.length) showPeople();
+  const events = eventsSorted(store);
   if (!events.length) { evlist.innerHTML = '<li class="empty">No saved events yet.</li>'; return; }
   evlist.innerHTML = events.map(ev => `
     <li class="evrow" data-id="${escapeAttr(ev.id)}">
       <div class="evmain">
         <div class="evname"><a href="${escapeAttr(ev.url)}" target="_blank" rel="noopener">${escapeHtml(ev.name)}</a></div>
-        <div class="evmeta">${ev.guestCount} guests${ev.city ? " · " + escapeHtml(ev.city) : ""}${ev.startAt ? " · " + escapeHtml(ev.startAt.slice(0,10)) : ""}</div>
+        <div class="evmeta">${ev.guests.length} guests${ev.city ? " · " + escapeHtml(ev.city) : ""}${ev.startAt ? " · " + escapeHtml(ev.startAt.slice(0,10)) : ""}</div>
       </div>
       <button class="tiny" data-act="hosts">Add hosts</button>
       <button class="tiny" data-act="check">Check</button>
       <button class="tiny" data-act="delete">Delete</button>
     </li>`).join("");
 }
-
-evlist.addEventListener("click", async (e) => {
+evlist.addEventListener("click", (e) => {
   const btn = e.target.closest("button"); if (!btn) return;
   const id = btn.closest(".evrow").dataset.id;
   if (btn.dataset.act === "delete") {
-    await fetch(`/api/events/${encodeURIComponent(id)}`, { method: "DELETE" });
-    loadEvents();
+    const store = loadStore(); store.events = store.events.filter((ev) => ev.id !== id); saveStore(store); loadEvents();
   } else if (btn.dataset.act === "check") {
     analyze({ eventId: id });
   } else if (btn.dataset.act === "hosts") {
@@ -264,80 +362,116 @@ evlist.addEventListener("click", async (e) => {
   }
 });
 
-function fetchHosts(payload) {
-  startJob("/api/events/hosts", payload, (result) => {
-    setStatus(`Added ${result.hostsAdded} host${result.hostsAdded === 1 ? "" : "s"} across ${result.events} event${result.events === 1 ? "" : "s"} (${result.fetched} fetched, ${result.hits} cached).`);
-    loadEvents();
-  });
-}
-
-// --- actions -----------------------------------------------------------------
+// --- progress / status ------------------------------------------------------
 function setStatus(msg, isErr = false) { statusEl.textContent = msg || ""; statusEl.classList.toggle("err", !!isErr); }
 function setBar(done, total) {
   if (!total) { bar.style.display = "none"; return; }
   bar.style.display = "block"; barFill.style.width = Math.round((done / total) * 100) + "%";
 }
-
-// shared: kick off a background job and poll it to completion
-async function startJob(endpoint, payload, onDone) {
-  setStatus("Reading profiles in the background…");
-  setBar(0, 1);
-  let jobId;
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.status);
-    jobId = data.jobId;
-  } catch (e) {
-    setBar(0, 0);
-    setStatus(`Couldn't reach the server (${e.message}). Is it running ("npm start")?`, true);
-    return;
-  }
-  poll(jobId, onDone);
+let busy = false;
+async function run(fn) {
+  if (busy) return; busy = true; setBar(0, 1);
+  const progress = (done, total, msg) => { setBar(done, total); setStatus(`Reading profiles — ${done}/${total}${msg ? " · " + msg : ""}`); };
+  try { await fn(progress); }
+  catch (e) { setStatus(e.message || String(e), true); }
+  finally { busy = false; setBar(0, 0); }
 }
 
-async function poll(jobId, onDone) {
-  let res;
-  try { res = await (await fetch(`/api/job/${jobId}`)).json(); }
-  catch (e) { setStatus(`Lost contact with the server (${e.message}).`, true); return; }
-  const pr = res.progress || {};
-  if (res.status === "running") {
-    setBar(pr.done || 0, pr.total || 1);
-    const label = pr.phase === "hosts" ? "Fetching hosts" : "Reading profiles";
-    setStatus(`${label} — ${pr.done || 0}/${pr.total || "?"} · ${pr.message || ""}`);
-    return void setTimeout(() => poll(jobId, onDone), 600);
-  }
-  if (res.status === "error") { setBar(0, 0); setStatus(res.error || "job failed", true); return; }
-  setBar(1, 1);
-  onDone(res.result);
-}
-
+// --- actions ----------------------------------------------------------------
 function save() {
-  if (!eventUrl.value.trim()) return setStatus("Add the event URL first.", true);
+  const url = eventUrl.value.trim();
+  if (!url) return setStatus("Add the event URL first.", true);
   if (!state.guests.length) return setStatus("Paste the guest list first.", true);
-  startJob("/api/events", { url: eventUrl.value.trim(), guests: state.guests }, (result) => {
-    const s = result.stats;
-    setStatus(`Saved “${result.event.name}” — ${result.event.guestCount} guests (${s.fetched} fetched, ${s.hits} already cached).`);
+  run(async (progress) => {
+    setStatus("Reading the event…");
+    const meta = await fetchEventMeta(url);
+    const all = normGuests([...state.guests, ...(meta.hosts || [])]);
+    const { hits, fetched } = await enrichGuests(all.map(g => g.profileUrl), (d, t, p) => progress(d, t, p && (p.name || p.profileUrl)));
+    const store = loadStore();
+    const id = meta.slug || meta.url;
+    const existing = store.events.find((e) => e.id === id);
+    const record = { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city,
+                     addedAt: existing?.addedAt || new Date().toISOString(), guests: all };
+    if (existing) Object.assign(existing, record); else store.events.push(record);
+    saveStore(store);
+    setStatus(`Saved “${meta.name}” — ${all.length} guests (${fetched} fetched, ${hits} already cached).`);
     loadEvents();
   });
 }
 
 function analyze(payload) {
-  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
-  startJob("/api/analyze", payload, (result) => {
-    setStatus(`Done — ${result.stats.known} of ${result.stats.resolved} guests you've crossed paths with before.`);
-    renderResult(result);
+  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; noteEl.textContent = "";
+  run(async (progress) => {
+    const store = loadStore();
+    let guests, targetEvent = null;
+    if (payload.eventId) {
+      targetEvent = store.events.find((e) => e.id === payload.eventId);
+      if (!targetEvent) throw new Error("unknown saved event");
+      guests = targetEvent.guests;
+    } else {
+      guests = normGuests(payload.guests);
+      if (!guests.length) throw new Error("no Luma /user/ profiles found in the guest list");
+      if (payload.url) {
+        setStatus("Reading the event…");
+        let meta = null;
+        try { meta = await fetchEventMeta(payload.url); } catch { /* still usable without meta */ }
+        if (meta) {
+          guests = normGuests([...guests, ...(meta.hosts || [])]);
+          const id = meta.slug || meta.url;
+          targetEvent = store.events.find((e) => e.id === id) || { id, url: meta.url, name: meta.name, startAt: meta.startAt, city: meta.city };
+        }
+      }
+    }
+    const seenIndex = new Map();
+    for (const ev of store.events) {
+      if (targetEvent && ev.id === targetEvent.id) continue;
+      for (const g of ev.guests) {
+        if (!seenIndex.has(g.profileUrl)) seenIndex.set(g.profileUrl, []);
+        seenIndex.get(g.profileUrl).push({ id: ev.id, name: ev.name, url: ev.url });
+      }
+    }
+    const { people } = await enrichGuests(guests.map(g => g.profileUrl), (d, t, p) => progress(d, t, p && (p.name || p.profileUrl)));
+    for (const p of people) { if (!p.error) p.seenAt = seenIndex.get(p.profileUrl) || []; }
+    const title = targetEvent?.name || "Luma rolodex";
+    const resolved = people.filter(p => !p.error).length;
+    const known = people.filter(p => !p.error && p.seenAt?.length).length;
+    renderResult({
+      event: targetEvent ? { name: targetEvent.name, guestCount: guests.length } : null,
+      people, markdown: peopleMarkdown(people, title),
+      stats: { total: people.length, resolved, known },
+    });
+    setStatus(`Done — ${known} of ${resolved} guests you've crossed paths with before.`);
   });
 }
 
-// check the freshly pasted event (uses the URL only to label/exclude it)
+function fetchHosts(payload) {
+  run(async (progress) => {
+    const store = loadStore();
+    const targets = payload.eventId ? store.events.filter((e) => e.id === payload.eventId) : store.events;
+    if (!targets.length) throw new Error("no matching events");
+    const newUrls = new Set(); let hostsAdded = 0;
+    for (const ev of targets) {
+      setStatus(`Reading hosts for ${ev.name}…`);
+      let meta = null;
+      try { meta = await fetchEventMeta(ev.url); } catch { /* skip */ }
+      if (!meta) continue;
+      const had = new Set(ev.guests.map((g) => g.profileUrl));
+      ev.guests = normGuests([...ev.guests, ...(meta.hosts || [])]);
+      for (const g of ev.guests) if (!had.has(g.profileUrl)) { newUrls.add(g.profileUrl); hostsAdded++; }
+    }
+    saveStore(store);
+    const { hits, fetched } = await enrichGuests([...newUrls], (d, t, p) => progress(d, t, p && (p.name || p.profileUrl)));
+    setStatus(`Added ${hostsAdded} host${hostsAdded === 1 ? "" : "s"} across ${targets.length} event${targets.length === 1 ? "" : "s"} (${fetched} fetched, ${hits} cached).`);
+    loadEvents();
+  });
+}
+
 function checkCurrent() {
   if (!state.guests.length) return setStatus("Paste the guest list first.", true);
   analyze({ url: eventUrl.value.trim() || undefined, guests: state.guests });
 }
 
+// --- paste capture ----------------------------------------------------------
 zone.addEventListener("paste", (e) => {
   e.preventDefault();
   const cd = e.clipboardData || window.clipboardData;
@@ -352,6 +486,7 @@ zone.addEventListener("paste", (e) => {
   setStatus("");
 });
 
+// --- wiring -----------------------------------------------------------------
 $("save").addEventListener("click", save);
 $("check").addEventListener("click", checkCurrent);
 $("showPeople").addEventListener("click", showPeople);
@@ -359,7 +494,7 @@ $("fetchHosts").addEventListener("click", () => fetchHosts({}));
 $("clear").addEventListener("click", () => {
   state.guests = []; zone.innerHTML = ""; eventUrl.value = ""; stat.textContent = "";
   setStatus(""); setBar(0, 0);
-  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; filesEl.textContent = "";
+  results.innerHTML = ""; resultsHead.style.display = "none"; resultTools.style.display = "none"; noteEl.textContent = "";
 });
 
 $("copyMd").addEventListener("click", async () => {
@@ -370,34 +505,34 @@ $("copyMd").addEventListener("click", async () => {
 $("downloadMd").addEventListener("click", () => {
   if (!state.result) return;
   const name = (state.result.event?.name || "luma-rolodex").replace(/[^\w.-]+/g, "-").slice(0, 60) + ".md";
-  const blob = new Blob([state.result.markdown], { type: "text/markdown" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+  download(name, state.result.markdown, "text/markdown");
 });
 
-$("export").addEventListener("click", async () => {
-  try {
-    const text = await (await fetch("/api/export")).text();
-    const blob = new Blob([text], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = "luma-intel-backup.json"; a.click(); URL.revokeObjectURL(a.href);
-    setStatus("Exported your events and cached profiles.");
-  } catch (e) { setStatus(`Export failed (${e.message}).`, true); }
+$("export").addEventListener("click", () => {
+  download("luma-intel-backup.json", JSON.stringify(loadStore(), null, 2), "application/json");
+  setStatus("Exported your events and cached profiles.");
 });
 $("import").addEventListener("click", () => $("importFile").click());
 $("importFile").addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   try {
-    const body = await file.text();
-    const res = await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.status);
-    setStatus(`Imported ${data.events} events and ${data.people} cached profiles.`);
+    let backup;
+    try { backup = JSON.parse(await file.text()); }
+    catch { throw new Error("that file isn't valid JSON — pick a luma-intel backup file"); }
+    if (!backup || !Array.isArray(backup.events)) throw new Error("that doesn't look like a luma-intel backup (no \"events\" list)");
+    saveStore({ events: backup.events, people: (backup.people && typeof backup.people === "object") ? backup.people : {} });
+    setStatus(`Imported ${backup.events.length} events and ${Object.keys(backup.people || {}).length} cached profiles.`);
     loadEvents();
-  } catch (err) { setStatus(`Import failed (${err.message}).`, true); }
+  } catch (err) { setStatus(`Import failed: ${err.message}`, true); }
   finally { e.target.value = ""; }
 });
+
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
 
 loadEvents();
 </script>

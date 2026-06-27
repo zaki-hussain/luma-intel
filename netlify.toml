@@ -1,0 +1,25 @@
+# Zero-setup deploy: Netlify hosts the page AND a tiny serverless function that
+# fetches Luma pages (the only thing a browser can't do, due to CORS). All user
+# data (events + profile cache) lives in the visitor's browser (localStorage),
+# so anyone can just open the site and use it — nothing to install or run.
+#
+# Netlify build settings (UI equivalents):
+#   Base directory:      (leave blank)
+#   Package directory:   (leave blank)
+#   Build command:       npm run build:site
+#   Publish directory:   dist
+#   Functions directory: netlify/functions
+
+[build]
+  command = "npm run build:site"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Clean URL for the function.
+[[redirects]]
+  from = "/api/luma"
+  to = "/.netlify/functions/luma"
+  status = 200
